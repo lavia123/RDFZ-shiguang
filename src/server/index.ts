@@ -3,103 +3,94 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import express from "express";
 import { configFromEnv } from "./config.js";
-import { FileStore } from "./storage.js";
-import { createApp, errorHandler } from "./app.js";
-import { fixtureActor } from "./auth.js";
-import {
-  createLostMatching,
-  type LostMatchingHandles,
-} from "./lost-matching/mount.js";
-import { createDefaultReviewer } from "./moderation/review.js";
-import {
-  isApprovedVersion,
-  type ReviewCandidate as IdentityReviewCandidate,
-} from "../shared/identity.js";
+import { errorHandler } from "./app.js";
+import { createBusinessRuntime } from "./business-runtime.js";
+import { readPlatformScope, verifyPlatformToken } from "./platform-bridge.js";
+import { platformScope } from "./platform-scope.js";
+import { sessionView } from "../shared/identity.js";
+import { HttpError } from "./errors.js";
 
 const config = configFromEnv();
-const store = new FileStore(config.dataDir);
-let storeReady: Promise<FileStore> | undefined;
-let handoffB: LostMatchingHandles | undefined;
-const acquireStore = () =>
-  (storeReady ??= store.acquire().catch((error) => {
-    storeReady = undefined;
-    throw error;
-  }));
-
-/**
- * 统一审核入口：兼容 A（texts/images）与 B（textFields/imageRef）。
- */
-function createIdentityReviewer(cfg: typeof config) {
-  const review = createDefaultReviewer(cfg);
-  return async (
-    candidate: IdentityReviewCandidate & {
-      textFields?: Record<string, string>;
-      imageRef?: string;
-    },
-  ) =>
-    review({
-      kind: candidate.kind,
-      revision: candidate.revision,
-      textFields: candidate.textFields || candidate.texts || {},
-      imageRef:
-        candidate.imageRef ||
-        candidate.images?.find((name) => name.startsWith("staging_")) ||
-        candidate.images?.[0],
-    });
+const platform = !!process.env.RDFZ_APPLICATION_TOKEN;
+const runtimes = new Map<
+  string,
+  Promise<Awaited<ReturnType<typeof createBusinessRuntime>>>
+>();
+function businessFor(dataDir: string) {
+  let pending = runtimes.get(dataDir);
+  if (!pending) {
+    const scoped = {
+      ...config,
+      dataDir,
+      ...(platform
+        ? { testActors: false, testReviewAllow: false, devActor: "" }
+        : {}),
+    };
+    pending = platformScope
+      .exit(() => createBusinessRuntime(scoped, platform))
+      .catch((error) => {
+        runtimes.delete(dataDir);
+        throw error;
+      });
+    runtimes.set(dataDir, pending);
+  }
+  return pending;
+}
+async function closeRuntimes() {
+  await Promise.all(
+    [...runtimes.values()].map(async (value) => {
+      const runtime = await value.catch(() => null);
+      await runtime?.close();
+    }),
+  );
 }
 
 try {
   const app = express();
   const routes = express.Router();
-  const handoffRouter = express.Router();
-  // B 的寻物调度在拿到数据目录锁之后启动。健康检查不进入这里，也不抢锁。
-  // C 的审核接在 createApp 的 reviewSubmission 注入点。
-  let integrationsStarted = false;
-  const startOwnedIntegrations = async () => {
-    if (integrationsStarted) return;
-    integrationsStarted = true;
-    if (!handoffB) {
-      handoffB = await createLostMatching({
-        config,
-        store,
-        resolveActor: ({ header }) => {
-          if (!config.testActors) return { kind: "guest" as const };
-          const key = String(header("x-test-actor") || "").trim();
-          return (
-            (key && fixtureActor(key)) ||
-            fixtureActor(config.devActor) || { kind: "guest" as const }
-          );
-        },
-        reviewSubmission: createIdentityReviewer(config),
-        isApprovedVersion,
-      });
-      handoffB.mountRoutes(handoffRouter);
-      handoffB.scheduler.start();
-    }
-  };
-  const stopOwnedIntegrations = async () => {
-    if (handoffB) {
-      await handoffB.scheduler.stop();
-      handoffB = undefined;
-    }
-    integrationsStarted = false;
-  };
-  // Candidate health checks must not acquire the previous release's data lease.
+  if (platform)
+    routes.use((req, _res, next) => {
+      try {
+        verifyPlatformToken(req);
+        next();
+      } catch (error) {
+        next(error);
+      }
+    });
+  // Candidate health must not acquire any active release's data lease.
   routes.get("/api/health", (_req, res) => res.json({ ok: true }));
-  routes.use(["/api", "/uploads"], async (_req, _res, next) => {
+  const business = express.Router();
+  routes.use(async (req, res, next) => {
+    if (!req.path.startsWith("/api/") && !req.path.startsWith("/uploads/"))
+      return next();
+    const controller = new AbortController();
+    const abort = () => {
+      if (!res.writableFinished) controller.abort();
+    };
+    res.once("close", abort);
     try {
-      await acquireStore();
-      await startOwnedIntegrations();
-      next();
+      if (platform) {
+        const scope = readPlatformScope(req, controller.signal);
+        if (req.method === "GET" && req.path === "/api/session") {
+          res.json({
+            session: sessionView(scope.actor, null, "platform"),
+            testActors: false,
+          });
+          return;
+        }
+        if (scope.actor.kind === "guest")
+          throw new HttpError(401, "请先使用平台学生身份登录");
+        const runtime = await businessFor(
+          path.join(scope.dataRoot, "shiguang-platform"),
+        );
+        platformScope.run(scope, () => runtime.router(req, res, next));
+      } else {
+        const runtime = await businessFor(config.dataDir);
+        runtime.router(req, res, next);
+      }
     } catch (error) {
       next(error);
     }
-  });
-  // 寻物/消息路由在 createApp 之前挂载，须自行解析 JSON，否则 body 为空。
-  routes.use(express.json({ limit: "2mb" }));
-  routes.use(handoffRouter);
-  const business = createApp(config, store, fetch, {
-    reviewSubmission: createIdentityReviewer(config),
   });
   routes.use(business);
   app.use(config.basePath || "/", routes);
@@ -170,7 +161,7 @@ try {
     config.production && !process.env.RDFZ_LESSON_ID ? "0.0.0.0" : "127.0.0.1",
     () =>
       console.log(
-        `拾光已启动：http://localhost:${config.port}\n数据目录：${config.dataDir}\nAI：${config.aiKey ? "DeepSeek 已配置" : "未配置，支持手动填写"}\n身份：学校平台登录尚未接入${config.testActors ? "（当前进程打开了测试身份）" : "，写操作需要平台身份"}`,
+        `拾光已启动：http://localhost:${config.port}\n数据目录：${config.dataDir}\nAI：${config.aiKey ? "DeepSeek 已配置" : "未配置，支持手动填写"}\n身份：${platform ? "平台学生身份" : "独立试用模式"}`,
       ),
   );
   let stopping = false;
@@ -185,11 +176,7 @@ try {
         await closeFrontend();
       } finally {
         await drained;
-        await stopOwnedIntegrations();
-        if (storeReady) {
-          await storeReady.catch(() => {});
-          await store.close();
-        }
+        await closeRuntimes();
       }
       process.exit(0);
     })().catch(() => {
@@ -200,19 +187,12 @@ try {
   server.on("error", async (err) => {
     console.error("启动失败：", err.message);
     await closeFrontend();
-    await stopOwnedIntegrations().catch(() => {});
-    if (storeReady) {
-      await storeReady.catch(() => {});
-      await store.close();
-    }
+    await closeRuntimes().catch(() => {});
     process.exit(1);
   });
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 } catch (err) {
-  if (storeReady) {
-    await storeReady.catch(() => {});
-    await store.close();
-  }
+  await closeRuntimes();
   throw err;
 }

@@ -4,6 +4,11 @@ import { atomicWrite, validId } from "../storage.js";
 import { HttpError } from "../errors.js";
 import type { LostPost } from "../../shared/lost.js";
 
+import {
+  visibleInScope,
+  assertInScope,
+  retainRecordScope,
+} from "../platform-scope.js";
 export class LostStore {
   private queues = new Map<string, Promise<unknown>>();
 
@@ -20,6 +25,12 @@ export class LostStore {
   }
 
   async read(id: string): Promise<LostPost | null> {
+    const post = await this.readAny(id);
+    return post && visibleInScope(post.ownerClassId, post.schoolRecord)
+      ? post
+      : null;
+  }
+  private async readAny(id: string): Promise<LostPost | null> {
     let raw: string;
     try {
       raw = await readFile(this.file(id), "utf8");
@@ -49,20 +60,27 @@ export class LostStore {
 
   async mutate(
     id: string,
-    change: (current: LostPost | null) => LostPost | null | Promise<LostPost | null>,
+    change: (
+      current: LostPost | null,
+    ) => LostPost | null | Promise<LostPost | null>,
   ) {
     this.file(id);
     const previous = this.queues.get(id) || Promise.resolve();
-    const task = previous.catch(() => {}).then(async () => {
-      const next = await change(await this.read(id));
-      if (next) {
-        if (next.id !== id) throw new Error("寻物 ID 不可修改");
-        await atomicWrite(this.file(id), next);
-      } else {
-        await rm(this.file(id), { force: true });
-      }
-      return next;
-    });
+    const task = previous
+      .catch(() => {})
+      .then(async () => {
+        const current = await this.readAny(id);
+        if (current) assertInScope(current.ownerClassId, current.schoolRecord);
+        const next = await change(current);
+        if (next) retainRecordScope(current, next);
+        if (next) {
+          if (next.id !== id) throw new Error("寻物 ID 不可修改");
+          await atomicWrite(this.file(id), next);
+        } else {
+          await rm(this.file(id), { force: true });
+        }
+        return next;
+      });
     this.queues.set(id, task);
     try {
       return await task;

@@ -50,7 +50,9 @@ export function Header({
           title={
             session.provenance === "test"
               ? "本地试用登录，不是学校平台登录"
-              : "学校平台登录尚未接入"
+              : session.provenance === "platform"
+                ? "平台已验证身份"
+                : "未登录"
           }
         >
           {badge}
@@ -88,7 +90,9 @@ export function Header({
             style={{ cursor: "default" }}
           >
             <span className={"ai-dot" + (ai.configured ? " on" : "")}></span>
-            <span>{ai.configured ? "服务器 AI 已就绪" : "服务器 AI 未配置"}</span>
+            <span>
+              {ai.configured ? "服务器 AI 已就绪" : "服务器 AI 未配置"}
+            </span>
           </span>
         )}
         <nav className="nav-tabs" aria-label="功能切换">

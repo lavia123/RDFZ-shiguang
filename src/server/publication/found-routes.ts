@@ -159,7 +159,7 @@ export function foundPublicationRouter(deps: {
       saved = true;
       await removeStaging(deps.dataDir, imageRef);
       res.status(201).json({
-        item: publicItem(record as ItemRecord, false, actor.userId),
+        item: publicItem(record as ItemRecord, actor),
         notice: "已通过审核并公开",
       });
     } finally {
@@ -260,7 +260,7 @@ export function foundPublicationRouter(deps: {
       if (imageRef) await removeStaging(deps.dataDir, imageRef);
       if (oldImage) await removeUploadUrl(deps.dataDir, oldImage);
       res.json({
-        item: publicItem(record as ItemRecord, false, actor.userId),
+        item: publicItem(record as ItemRecord, actor),
         notice: "修改已通过审核并公开",
       });
     } finally {

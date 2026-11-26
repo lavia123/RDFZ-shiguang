@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { platformScope } from "../platform-scope.js";
 import type { Request } from "express";
 import { HttpError, text } from "../errors.js";
 import type { FileStore } from "../storage.js";
@@ -15,8 +16,7 @@ import { foundContentRevision, isOpenFoundItem } from "../matching/found.js";
 function requireMailbox(actor: CurrentActor) {
   if (actor.kind === "guest" || !actor.userId)
     throw new HttpError(401, "需要登录身份才能查看消息");
-  if (actor.kind === "kiosk")
-    throw new HttpError(403, "公共端不显示私人消息");
+  if (actor.kind === "kiosk") throw new HttpError(403, "公共端不显示私人消息");
   return actor as CurrentActor & { userId: string };
 }
 
@@ -36,6 +36,17 @@ export function messagesRouter(deps: {
       },
       body: req.body,
     });
+
+  async function inScope(msg: Awaited<ReturnType<MessageStore["read"]>>) {
+    if (!msg) return false;
+    if (!platformScope.getStore()) return true;
+    // Match explanations can contain content from both referenced records.
+    const [lost, found] = await Promise.all([
+      deps.lost.read(msg.lostPostId),
+      deps.store.read(msg.itemId),
+    ]);
+    return !!lost && !!found;
+  }
 
   async function decorate(
     msg: Awaited<ReturnType<MessageStore["read"]>> & object,
@@ -76,7 +87,12 @@ export function messagesRouter(deps: {
     const actor = requireMailbox(await actorOf(req));
     const list = await deps.messages.listForUser(actor.userId);
     list.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-    const messages = await Promise.all(list.map((m) => decorate(m)));
+    const visible = await Promise.all(
+      list.map(async (m) => ((await inScope(m)) ? m : null)),
+    );
+    const messages = await Promise.all(
+      visible.filter((m) => m !== null).map((m) => decorate(m)),
+    );
     res.json({
       messages,
       unread: messages.filter((m) => !m.read && !m.dismissed && !m.stale)
@@ -87,37 +103,51 @@ export function messagesRouter(deps: {
   router.get("/messages/:id", async (req, res) => {
     const actor = requireMailbox(await actorOf(req));
     const msg = await deps.messages.read(text(req.params.id));
-    if (!msg || msg.recipientUserId !== actor.userId)
+    if (!msg || msg.recipientUserId !== actor.userId || !(await inScope(msg)))
       throw new HttpError(404, "消息不存在");
     res.json({ message: await decorate(msg) });
   });
 
   router.post("/messages/:id/read", async (req, res) => {
     const actor = requireMailbox(await actorOf(req));
-    const updated = await deps.messages.mutate(text(req.params.id), (cur) => {
-      if (!cur || cur.recipientUserId !== actor.userId)
-        throw new HttpError(404, "消息不存在");
-      return {
-        ...cur,
-        read: true,
-        updatedAt: new Date().toISOString(),
-      };
-    });
+    const updated = await deps.messages.mutate(
+      text(req.params.id),
+      async (cur) => {
+        if (
+          !cur ||
+          cur.recipientUserId !== actor.userId ||
+          !(await inScope(cur))
+        )
+          throw new HttpError(404, "消息不存在");
+        return {
+          ...cur,
+          read: true,
+          updatedAt: new Date().toISOString(),
+        };
+      },
+    );
     res.json({ message: await decorate(updated!) });
   });
 
   router.post("/messages/:id/dismiss", async (req, res) => {
     const actor = requireMailbox(await actorOf(req));
-    const updated = await deps.messages.mutate(text(req.params.id), (cur) => {
-      if (!cur || cur.recipientUserId !== actor.userId)
-        throw new HttpError(404, "消息不存在");
-      return {
-        ...cur,
-        dismissed: true,
-        read: true,
-        updatedAt: new Date().toISOString(),
-      };
-    });
+    const updated = await deps.messages.mutate(
+      text(req.params.id),
+      async (cur) => {
+        if (
+          !cur ||
+          cur.recipientUserId !== actor.userId ||
+          !(await inScope(cur))
+        )
+          throw new HttpError(404, "消息不存在");
+        return {
+          ...cur,
+          dismissed: true,
+          read: true,
+          updatedAt: new Date().toISOString(),
+        };
+      },
+    );
     res.json({ message: await decorate(updated!) });
   });
 

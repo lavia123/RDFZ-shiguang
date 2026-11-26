@@ -11,6 +11,14 @@ import type {
 } from "../../shared/b-contracts.js";
 import type { LostPost, LostPostInput } from "../../shared/lost.js";
 import type { ReviewResult } from "../../shared/publication.js";
+import { platformScope } from "../platform-scope.js";
+
+function managesSchoolRecord(post: LostPost) {
+  return (
+    post.schoolRecord === true &&
+    platformScope.getStore()?.canManageSchoolRecords === true
+  );
+}
 
 function requireStudent(actor: CurrentActor) {
   if (actor.kind === "guest" || !actor.userId)
@@ -31,13 +39,9 @@ function lostHoldReason(review: ReviewResult, editing: boolean): string | null {
     return danger.message;
   }
   if (review.status === "rejected") {
-    return editing
-      ? "修改未通过审核，已保留原合规版本"
-      : "寻物内容未通过审核";
+    return editing ? "修改未通过审核，已保留原合规版本" : "寻物内容未通过审核";
   }
-  return editing
-    ? "审核服务暂不可用，已保留原合规版本"
-    : "审核服务暂不可用";
+  return editing ? "审核服务暂不可用，已保留原合规版本" : "审核服务暂不可用";
 }
 
 function parseInput(body: Record<string, unknown>): LostPostInput {
@@ -104,7 +108,11 @@ export function lostRouter(deps: {
       revision: post.revision,
       publication: post.publication,
     });
-    if (!approved && post.ownerId !== actor.userId)
+    if (
+      !approved &&
+      post.ownerId !== actor.userId &&
+      !managesSchoolRecord(post)
+    )
       throw new HttpError(404, "寻物不存在");
     res.json({ post: publicLost(post) });
   });
@@ -176,7 +184,7 @@ export function lostRouter(deps: {
 
     const updated = await deps.lost.mutate(id, async (cur) => {
       if (!cur) throw new HttpError(404, "寻物不存在");
-      if (cur.ownerId !== actor.userId)
+      if (cur.ownerId !== actor.userId && !managesSchoolRecord(cur))
         throw new HttpError(403, "不能修改他人寻物");
       let next: LostPost = { ...cur, updatedAt: new Date().toISOString() };
 
@@ -192,13 +200,10 @@ export function lostRouter(deps: {
       if (contentTouched) {
         const input = parseInput({
           description:
-            body.description !== undefined
-              ? body.description
-              : cur.description,
+            body.description !== undefined ? body.description : cur.description,
           image: body.image !== undefined ? body.image : cur.image,
           place: body.place !== undefined ? body.place : cur.place,
-          lostFrom:
-            body.lostFrom !== undefined ? body.lostFrom : cur.lostFrom,
+          lostFrom: body.lostFrom !== undefined ? body.lostFrom : cur.lostFrom,
           lostTo: body.lostTo !== undefined ? body.lostTo : cur.lostTo,
         });
         const revision = cur.revision + 1;
@@ -242,13 +247,10 @@ export function lostRouter(deps: {
     const id = text(req.params.id);
     await deps.lost.mutate(id, (cur) => {
       if (!cur) throw new HttpError(404, "寻物不存在");
-      if (cur.ownerId !== actor.userId)
+      if (cur.ownerId !== actor.userId && !managesSchoolRecord(cur))
         throw new HttpError(403, "不能删除他人寻物");
       if (cur.status === "open")
-        throw new HttpError(
-          403,
-          "寻找中的寻物请先确认找回或关闭，再删除",
-        );
+        throw new HttpError(403, "寻找中的寻物请先确认找回或关闭，再删除");
       return null;
     });
     res.json({ ok: true });

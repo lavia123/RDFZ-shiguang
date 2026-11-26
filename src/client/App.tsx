@@ -39,6 +39,10 @@ export default function App() {
         ?.scrollTop || 0;
   };
   const [session, setSession] = useState<SessionView>(guestSession);
+  const [sessionReady, setSessionReady] = useState(false);
+  const sessionGeneration = useRef(0);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
   const [testActors, setTestActors] = useState(false);
   const [panel, setPanel] = useState<Panel>("browse");
   const [needLogin, setNeedLogin] = useState(true);
@@ -59,33 +63,70 @@ export default function App() {
   const refreshGeneration = useRef(0);
   const actions = useRef(new Set<string>());
   const notify = useCallback(
-    (text: string) => setToast((current) => ({ message: text, id: current.id + 1 })),
+    (text: string) =>
+      setToast((current) => ({ message: text, id: current.id + 1 })),
     [],
   );
   useEffect(() => {
     if (!toast.message) return;
-    const id = setTimeout(() => setToast((current) => ({ ...current, message: "" })), 2600);
+    const id = setTimeout(
+      () => setToast((current) => ({ ...current, message: "" })),
+      2600,
+    );
     return () => clearTimeout(id);
   }, [toast.id, toast.message]);
   const signedIn = session.kind !== "guest";
   const loadSession = useCallback(async (signal?: AbortSignal) => {
+    const generation = ++sessionGeneration.current;
     const data = await api<{ session: SessionView; testActors?: boolean }>(
       "/api/session",
       { signal },
     );
+    if (generation !== sessionGeneration.current) return sessionRef.current;
     setSession(data.session);
+    setSessionReady(true);
+    setAuthError("");
     setTestActors(!!data.testActors);
     setNeedLogin(data.session.kind === "guest");
     return data.session;
   }, []);
   useEffect(() => {
     const ctrl = new AbortController();
-    void api<AiStatus>("/api/ai/status", { signal: ctrl.signal })
-      .then(setAi)
-      .catch(() => {});
-    void loadSession(ctrl.signal).catch(() => setNeedLogin(true));
+    void loadSession(ctrl.signal).catch((error) => {
+      if (!ctrl.signal.aborted) setAuthError(message(error));
+    });
     return () => ctrl.abort();
   }, [loadSession]);
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (
+        event.source !== window.parent ||
+        event.origin !== window.location.origin ||
+        event.data?.type !== "rdfz:lesson-identity-changed"
+      )
+        return;
+      // A host notification triggers a server read; its payload never authenticates a user.
+      const previous = sessionRef.current;
+      void loadSession()
+        .then((next) => {
+          if (next.userId !== previous.userId || next.kind !== previous.kind) {
+            refreshGeneration.current++;
+            setItems([]);
+            setDetail("");
+            setPanel("browse");
+            resetRef.current();
+          }
+        })
+        .catch((error) => setAuthError(message(error)));
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [loadSession]);
+  function platformLogin() {
+    const frame = window.frameElement;
+    if (frame) frame.dispatchEvent(new CustomEvent("rdfz:lesson-identity"));
+    else setAuthError("请从平台课件入口打开");
+  }
   const refresh = useCallback(async () => {
     const token = ++refreshGeneration.current;
     const data = await api<{ items: Item[] }>("/api/items");
@@ -151,8 +192,11 @@ export default function App() {
   }
   useEffect(() => {
     if (!signedIn) return;
+    void api<AiStatus>("/api/ai/status")
+      .then(setAi)
+      .catch(() => {});
     void refresh().catch((err) => notify("无法连接服务器：" + message(err)));
-  }, [refresh, signedIn, session.kind, notify]);
+  }, [refresh, signedIn, session.kind, session.userId, notify]);
   useEffect(() => {
     if (session.kind === "kiosk") setPanel("found");
   }, [session.kind]);
@@ -161,12 +205,9 @@ export default function App() {
     if (session.kind !== "kiosk") setPanel("history");
   }, [refresh, session.kind]);
   const found = useFound(ai, notify, published);
-  useUnreadMessages(
-    signedIn && session.capabilities.readMessages,
-    (unread) => {
-      notify(`有 ${unread} 条新的寻物配对消息，可在「消息」查看`);
-    },
-  );
+  useUnreadMessages(signedIn && session.capabilities.readMessages, (unread) => {
+    notify(`有 ${unread} 条新的寻物配对消息，可在「消息」查看`);
+  });
   const resetRef = useRef(found.reset);
   resetRef.current = found.reset;
   const notifyRef = useRef(notify);
@@ -283,7 +324,10 @@ export default function App() {
       action === "reopen"
         ? { reason: (body as { reason?: string } | undefined)?.reason || "" }
         : body;
-    await api(`/api/items/${detail}/${path}`, { method: "POST", json: payload ?? {} });
+    await api(`/api/items/${detail}/${path}`, {
+      method: "POST",
+      json: payload ?? {},
+    });
     await refresh();
     notify(
       {
@@ -322,6 +366,12 @@ export default function App() {
     <>
       <LoginRequired
         open={!signedIn || needLogin}
+        ready={sessionReady}
+        onRetry={() =>
+          void loadSession().catch((error) => setAuthError(message(error)))
+        }
+        platform={session.platformLogin === "ready"}
+        onPlatformLogin={platformLogin}
         busy={authBusy}
         error={authError}
         onLogin={(input) => void loginWithPassword(input)}
@@ -341,74 +391,68 @@ export default function App() {
         />
       ) : null}
       {signedIn ? (
-      <div className="app" id="app">
-        <Header
-          ai={ai}
-          session={session}
-          panel={panel}
-          idleLabel={formatIdle(idleLeft)}
-          testActors={testActors}
-          onPanel={onPanel}
-          onEndKiosk={endKiosk}
-          onOpenSettings={() => {
-            setSettingsError("");
-            setSettingsOpen(true);
-          }}
-        />
-        <main>
-          {panel === "found" && session.capabilities.publishFound && (
-            <FoundIdentityBanner session={session} />
-          )}
-          <FoundPanel
-            active={panel === "found" && session.capabilities.publishFound}
-            m={found}
-            notify={notify}
-          />
-          <BrowsePanel
-            active={panel === "browse"}
-            items={filtered.filter((item) => item.status !== "withdrawn")}
-            search={search}
-            from={from}
-            to={to}
-            onSearch={setSearch}
-            onFrom={setFrom}
-            onTo={setTo}
-            onOpen={setDetail}
-          />
-          <HistoryPanel
-            active={panel === "history"}
-            items={mine}
-            onEdit={(item) => {
-              onPanel("found");
-              found.edit(item);
+        <div className="app" id="app">
+          <Header
+            ai={ai}
+            session={session}
+            panel={panel}
+            idleLabel={formatIdle(idleLeft)}
+            testActors={testActors}
+            onPanel={onPanel}
+            onEndKiosk={endKiosk}
+            onOpenSettings={() => {
+              setSettingsError("");
+              setSettingsOpen(true);
             }}
-            onDelete={(item) => void remove(item)}
           />
-          {session.capabilities.readMessages && (
-            <LostPanel
-              active={panel === "lost"}
+          <main>
+            {panel === "found" && session.capabilities.publishFound && (
+              <FoundIdentityBanner session={session} />
+            )}
+            <FoundPanel
+              active={panel === "found" && session.capabilities.publishFound}
+              m={found}
               notify={notify}
             />
-          )}
-          {session.capabilities.readMessages && (
-            <MessagesPanel
-              active={panel === "messages"}
-              notify={notify}
-            />
-          )}
-          {session.kind === "admin" && (
-            <AdminPanel
-              active={panel === "admin"}
-              items={items}
-              matchingBusy={matchingBusy}
+            <BrowsePanel
+              active={panel === "browse"}
+              items={filtered.filter((item) => item.status !== "withdrawn")}
+              search={search}
+              from={from}
+              to={to}
+              onSearch={setSearch}
+              onFrom={setFrom}
+              onTo={setTo}
               onOpen={setDetail}
-              onDelete={(item) => void remove(item)}
-              onMarkHighValue={(item) => void markHighValue(item)}
-              onRunMatching={() => void runMatching()}
             />
-          )}
-        </main>
-      </div>
+            <HistoryPanel
+              active={panel === "history"}
+              items={mine}
+              onEdit={(item) => {
+                onPanel("found");
+                found.edit(item);
+              }}
+              onDelete={(item) => void remove(item)}
+            />
+            {session.capabilities.readMessages && (
+              <LostPanel active={panel === "lost"} notify={notify} />
+            )}
+            {session.capabilities.readMessages && (
+              <MessagesPanel active={panel === "messages"} notify={notify} />
+            )}
+            {session.kind === "admin" && (
+              <AdminPanel
+                active={panel === "admin"}
+                items={items}
+                matchingBusy={matchingBusy}
+                onOpen={setDetail}
+                onDelete={(item) => void remove(item)}
+                onMarkHighValue={(item) => void markHighValue(item)}
+                onRunMatching={() => void runMatching()}
+              />
+            )}
+          </main>
+        </div>
       ) : null}
       {signedIn && selectedItem && (
         <DetailModal

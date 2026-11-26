@@ -3,5 +3,6 @@
   "publicDir": "dist/public",
   "entry": "dist/server/index.mjs",
   "healthPath": "/api/health",
-  "bridge": false
+  "bridge": true,
+  "schoolData": true
 }
