@@ -1,8 +1,7 @@
-/** 我捡到了：失物招领处默认填写，可改。 */
-export const DEFAULT_OFFICE = "逸夫楼316";
+/** 全校只认这一个领取地点，发布时不能改成别的地方。 */
+export const FIXED_OFFICE = "逸夫楼316";
 
 export const OFFICES = [
-  "逸夫楼316",
   "学生事务中心失物招领处",
   "保卫处失物招领处",
   "图书馆总服务台",
@@ -22,4 +21,3 @@ export const OFFICES = [
   "其他 / 临时保管点",
 ];
 export const CONTACT_TYPES = ["电话", "邮箱", "微信", "QQ", "其他"];
-export const PUBLISHER_KEY = "shiguang_publisher_id_v1";

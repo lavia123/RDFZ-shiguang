@@ -44,7 +44,7 @@ test("publishes, edits, filters and deletes using the signed-in student flow", a
   await expect(page.locator("#previewImg")).toHaveClass("show");
   await expect(page.locator("#aiStatus")).not.toHaveClass(/thinking/);
   await page.locator("#description").fill("浏览器测试蓝色水杯");
-  await page.locator("#office").selectOption("图书馆总服务台");
+  await expect(page.locator("#office")).toHaveText("逸夫楼316");
   await page.locator("#place").fill("图书馆二楼");
   await page.locator("#btnSubmit").click();
   await expect(page.locator("#panel-history")).toBeVisible();
@@ -81,11 +81,21 @@ test("extracts form text locally and handles camera permission failure", async (
   await page.locator('[data-panel="found"]').click();
   await page
     .locator("#fillText")
-    .fill("图书馆二楼捡的，交图书馆总服务台，联系人小唐，电话13800138000");
+    .fill("在图书馆二楼捡到一个蓝色水杯，联系人小唐，电话13800138000");
   await page.locator("#btnTextExtract").click();
-  await expect(page.locator("#office")).toHaveValue("图书馆总服务台");
+  await expect(page.locator("#office")).toHaveText("逸夫楼316");
   await expect(page.locator("#place")).toHaveValue("图书馆2楼");
-  await expect(page.locator("#contactValue")).toHaveValue("13800138000");
+  await expect(page.locator("#contact")).toHaveCount(0);
+  await page.locator('[data-panel="lost"]').click();
+  await page
+    .locator("#lostDescription")
+    .fill(
+      "你好，请问我昨天在图书馆丢了一个蓝色水杯，然后那个杯盖是白色的，谢谢大家",
+    );
+  await page.locator("#btnSimplify").click();
+  await expect(page.locator("#lostDescription")).toHaveValue(
+    "我昨天在图书馆丢了一个蓝色水杯，杯盖是白色的。",
+  );
   await page.evaluate(() => {
     navigator.mediaDevices.getUserMedia = () =>
       Promise.reject(new Error("permission denied"));

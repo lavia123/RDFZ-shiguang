@@ -9,9 +9,9 @@ import {
   type StationProfile,
 } from "../shared/identity.js";
 /**
- * 试用夹具在 config.testActors 打开时生效（平台登录接入前默认打开）。
+ * 测试夹具只在非生产且显式打开 SHIGUANG_TEST_ACTORS 时生效。
  * 请求头只能选择这里的键，不能传入任意 userId、姓名或角色。
- * 这些不是真实学生，不能当作学校平台登录。
+ * 这些不是真实学生，也不能在生产环境当作平台登录。
  */
 export const FIXTURE_ACTORS: Record<string, CurrentActor> = {
   student: {
@@ -25,20 +25,6 @@ export const FIXTURE_ACTORS: Record<string, CurrentActor> = {
     userId: "stu_other",
     name: "另一同学",
     className: "高二3班",
-  },
-  /** 本地试用：小李 · 高一一班（默认密码 456） */
-  xiaoli: {
-    kind: "student",
-    userId: "stu_xiaoli",
-    name: "小李",
-    className: "高一一班",
-  },
-  /** 本地试用：小唐 · 高三五班（默认密码 123） */
-  xiaotang: {
-    kind: "student",
-    userId: "stu_xiaotang",
-    name: "小唐",
-    className: "高三五班",
   },
   kiosk: {
     kind: "kiosk",
@@ -66,15 +52,13 @@ export const FIXTURE_STATIONS: StationProfile[] = [
 export const FIXTURE_STUDENTS: PlatformStudent[] = [
   { userId: "stu_fixture", name: "测试同学", className: "测试班级" },
   { userId: "stu_other", name: "另一同学", className: "高二3班" },
-  { userId: "stu_xiaoli", name: "小李", className: "高一一班" },
-  { userId: "stu_xiaotang", name: "小唐", className: "高三五班" },
 ];
 export function fixtureActor(key: string): CurrentActor | null {
   if (!/^[a-z]{1,16}$/.test(key)) return null;
   return FIXTURE_ACTORS[key] ? sanitizeActor(FIXTURE_ACTORS[key]) : null;
 }
 export function resolveActor(req: Request, config: Config): CurrentActor {
-  if (!config.testActors) return guestActor();
+  if (config.production || !config.testActors) return guestActor();
   const key = String(req.header("X-Test-Actor") || "").trim();
   if (key) return fixtureActor(key) ?? guestActor();
   return fixtureActor(config.devActor) ?? guestActor();
@@ -83,11 +67,12 @@ export function actorProvenance(
   config: Config,
   actor: CurrentActor,
 ): "none" | "test" {
-  if (!config.testActors || actor.kind === "guest") return "none";
+  if (config.production || !config.testActors || actor.kind === "guest")
+    return "none";
   return "test";
 }
 export function lookupStudent(userId: string, config: Config): LookupResult {
-  if (!config.testActors) return { status: "unavailable" };
+  if (config.production || !config.testActors) return { status: "unavailable" };
   const student = FIXTURE_STUDENTS.find((item) => item.userId === userId);
   return student ? { status: "found", student } : { status: "absent" };
 }

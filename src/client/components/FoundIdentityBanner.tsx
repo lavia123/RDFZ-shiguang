@@ -8,10 +8,8 @@ export function FoundIdentityBanner({ session }: { session: SessionView }) {
   if (form.mode === "kiosk")
     return (
       <p className="identity-banner" id="foundIdentity" data-found-mode="kiosk">
-        公共终端：{form.stationName || "未命名站点"}
-        。不用填写捡到者姓名。站点联系人
-        {form.stationContactName ? `「${form.stationContactName}」` : "可以不填"}
-        。发布成功、结束使用或闲置两分钟后，会清空这次的照片和表单，终端账号仍保持可用。
+        这是公共电脑：{form.stationName || "未命名站点"}
+        。不用填自己的名字。发完、点结束，或两分钟没操作，这次填写会清掉。
       </p>
     );
   return (
@@ -20,8 +18,8 @@ export function FoundIdentityBanner({ session }: { session: SessionView }) {
       id="foundIdentity"
       data-found-mode={form.mode}
     >
-      发布身份：{form.displayName || "未命名"} · {form.className || "未分班"}
-      。这是学校平台上的本人信息，不能改成其他人，也不需要填写手机号。
+      用你的学校账号发布：{form.displayName || "未命名"} ·{" "}
+      {form.className || "未分班"}。不用再填姓名和手机号。
     </p>
   );
 }

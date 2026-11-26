@@ -7,7 +7,6 @@ import type { Config } from "./config.js";
 import { FileStore } from "./storage.js";
 import { HttpError, text } from "./errors.js";
 import {
-  FIXTURE_ACTORS,
   FIXTURE_STATIONS,
   actorProvenance,
   lookupStudent,
@@ -17,6 +16,7 @@ import {
 import { canRead, normalizeRecord, publicItem } from "./items.js";
 import { aiRouter } from "./ai.js";
 import { registerFoundRoutes } from "./found-write.js";
+import { createDefaultReviewer } from "./moderation/review.js";
 import { registerClaimRoutes } from "./claims.js";
 import {
   isApprovedVersion,
@@ -29,14 +29,7 @@ import {
   type StationProfile,
 } from "../shared/identity.js";
 import type { ItemRecord } from "../shared/types.js";
-import {
-  findTrialByProfile,
-  loadTestPasswords,
-  saveTestPasswords,
-  trialAccounts,
-} from "./test-passwords.js";
 export interface AppDeps {
-  provenance?: "platform";
   resolveActor?: (req: Request) => CurrentActor | Promise<CurrentActor>;
   reviewSubmission?: (
     candidate: ReviewCandidate,
@@ -52,7 +45,9 @@ function requireRecord(record: ItemRecord | null) {
 async function unavailableReview(): Promise<ReviewResult> {
   return {
     status: "unavailable",
-    issues: [{ field: "publication", message: "内容审核尚未接入，暂不可公开" }],
+    issues: [
+      { field: "publication", message: "内容审核尚未接入，暂不可公开" },
+    ],
   };
 }
 export function createApp(
@@ -61,7 +56,9 @@ export function createApp(
   upstream: typeof fetch = fetch,
   deps: AppDeps = {},
 ) {
-  const stations = deps.stations ?? (config.testActors ? FIXTURE_STATIONS : []);
+  const stations =
+    deps.stations ??
+    (!config.production && config.testActors ? FIXTURE_STATIONS : []);
   const stationUserIds = stations.map((station) => station.userId);
   async function actorOf(req: Request) {
     const resolved = deps.resolveActor
@@ -69,10 +66,18 @@ export function createApp(
       : resolveActor(req, config);
     return sanitizeActor(resolved);
   }
+  const localReview = createDefaultReviewer(config);
   async function review(candidate: ReviewCandidate): Promise<ReviewResult> {
     if (deps.reviewSubmission) return deps.reviewSubmission(candidate);
     if (!config.production && config.testReviewAllow)
       return { status: "allowed", issues: [] };
+    if (!config.production)
+      return localReview({
+        kind: candidate.kind,
+        revision: candidate.revision,
+        textFields: candidate.texts,
+        imageRef: candidate.images[0],
+      });
     return unavailableReview();
   }
   async function lookup(userId: string): Promise<LookupResult> {
@@ -91,54 +96,9 @@ export function createApp(
       session: sessionView(
         actor,
         stationFor(actor, stations),
-        deps.provenance ??
-          (deps.resolveActor ? "test" : actorProvenance(config, actor)),
+        deps.resolveActor ? "test" : actorProvenance(config, actor),
       ),
-      /** 试用登录是否开放（平台登录接入前默认开放）。 */
-      testActors: config.testActors,
     });
-  });
-  app.post("/api/test-login", async (req, res) => {
-    if (!config.testActors) throw new HttpError(403, "当前环境不开放试用登录");
-    const name = text(req.body?.name);
-    const className = text(req.body?.className);
-    const password = text(req.body?.password);
-    if (!name || !className || !password)
-      throw new HttpError(400, "请填写姓名、班级和密码");
-    const account = findTrialByProfile(name, className);
-    if (!account) throw new HttpError(401, "姓名或班级不正确");
-    const passwords = await loadTestPasswords(config.dataDir);
-    if (passwords[account.key] !== password)
-      throw new HttpError(401, "密码不正确");
-    res.json({
-      ok: true,
-      actorKey: account.key,
-      account: { name: account.name, className: account.className },
-    });
-  });
-  app.post("/api/test-password", async (req, res) => {
-    if (!config.testActors)
-      throw new HttpError(403, "当前环境不开放修改试用密码");
-    const actor = await actorOf(req);
-    if (actor.kind !== "student" || !actor.userId)
-      throw new HttpError(401, "请先登录试用账号");
-    const account = trialAccounts().find((row) => {
-      const fixture = FIXTURE_ACTORS[row.key];
-      return fixture?.userId === actor.userId;
-    });
-    if (!account) throw new HttpError(403, "当前账号不能修改试用密码");
-    const currentPassword = text(req.body?.currentPassword);
-    const newPassword = text(req.body?.newPassword);
-    if (!currentPassword || !newPassword)
-      throw new HttpError(400, "请填写当前密码和新密码");
-    if (newPassword.length < 3 || newPassword.length > 32)
-      throw new HttpError(400, "新密码长度需在 3–32 个字符");
-    const passwords = await loadTestPasswords(config.dataDir);
-    if (passwords[account.key] !== currentPassword)
-      throw new HttpError(401, "当前密码不正确");
-    passwords[account.key] = newPassword;
-    await saveTestPasswords(config.dataDir, passwords);
-    res.json({ ok: true });
   });
   app.use("/api/ai", aiRouter(config, upstream));
   app.post("/api/feedback", async (req, res) => {
@@ -157,15 +117,15 @@ export function createApp(
     const actor = await actorOf(req);
     if (actor.kind !== "admin") throw new HttpError(403, "需要管理员权限");
     const userId = text(req.query.userId);
-    if (!userId)
-      throw new HttpError(400, "请按平台用户 ID 查找，不能列出全部学生");
+    if (!userId) throw new HttpError(400, "请按平台用户 ID 查找，不能列出全部学生");
     const found = await lookup(userId);
     if (found.status === "unavailable")
       throw new HttpError(
         503,
         "学生名单检索尚未由平台提供，请转平台方确认，不能在本地新建学生账号",
       );
-    if (found.status === "absent") throw new HttpError(404, "平台没有这名学生");
+    if (found.status === "absent")
+      throw new HttpError(404, "平台没有这名学生");
     res.json({ student: found.student });
   });
   app.get("/api/items", async (req, res) => {
@@ -217,11 +177,9 @@ export function createApp(
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || name.includes(".."))
       throw new HttpError(404, "图片不存在");
     const url = `/uploads/${name}`;
-    const actor = await actorOf(req);
     const visible = (await store.list()).some((record) => {
       const row = normalizeRecord(record).item;
       return (
-        canRead(record, actor) &&
         row.image === url &&
         row.status !== "withdrawn" &&
         isApprovedVersion({

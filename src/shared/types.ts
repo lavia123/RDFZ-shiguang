@@ -62,8 +62,6 @@ export interface Item {
   description: string;
   office: string;
   place: string;
-  /** 发布者备注（选填）。 */
-  note: string;
   contact: string;
   contactType: string;
   contactValue: string;
@@ -93,13 +91,9 @@ export interface Item {
 export interface ItemRow {
   id: string;
   owner_id: string;
-  ownerClassId?: string;
-  /** Explicit school-owned record; not assignable by public write APIs. */
-  schoolRecord?: true;
   description: string;
   office: string;
   place: string;
-  note?: string;
   contact: string;
   contact_type: string;
   contact_value: string;
@@ -137,7 +131,6 @@ export interface FillFields {
   contact: string;
   contactType: string;
   contactValue: string;
-  note?: string;
 }
 export interface AiStatus {
   configured: boolean;

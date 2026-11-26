@@ -66,12 +66,12 @@ export function MessagesPanel({ active, notify, onUnreadChange }: Props) {
       <div className="panel-head">
         <h1>消息{unread ? `（${unread} 未读）` : ""}</h1>
         <p>
-          以下为可能是你要找的物品线索，不是归属证明，也不会自动领取。
+          这里只给你自己看。出现的是可能相关的招领，不代表一定是你的，也不会自动领走。
         </p>
       </div>
       <div className="card-list">
         {messages.length === 0 && (
-          <p className="muted">暂无消息。发布寻物并完成每日配对后会出现在这里。</p>
+          <p className="muted">还没有消息。发出寻物并等到配对后，会出现在这里。</p>
         )}
         {messages.map((msg) => (
           <article

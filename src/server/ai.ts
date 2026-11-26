@@ -2,13 +2,12 @@ import { Router } from "express";
 import type { Config } from "./config.js";
 import { DEEPSEEK_MODEL, DEEPSEEK_URL } from "./config.js";
 import { HttpError, text } from "./errors.js";
-import { OFFICES } from "../shared/constants.js";
 import type { FillFields } from "../shared/types.js";
 export function aiRouter(config: Config, request: typeof fetch = fetch) {
   const router = Router();
   async function completion(messages: unknown[], maxTokens: number) {
     if (!config.aiKey)
-      throw new HttpError(503, "服务器尚未配置 AI，请联系管理人员");
+      throw new HttpError(503, "还没配好自动识别，请自己填写");
     const response = await request(DEEPSEEK_URL, {
       method: "POST",
       headers: {
@@ -71,9 +70,9 @@ export function aiRouter(config: Config, request: typeof fetch = fetch) {
     if (!transcript) throw new HttpError(400, "缺少口述文字");
     if (transcript.length > 10000) throw new HttpError(400, "说明文字过长");
     const prompt =
-      '你是校园失物招领表单助手。只根据口述提取字段，不要编造。只输出一个 JSON 对象，不要 Markdown：{"place":"捡到场所","office":"失物招领处","contact":"联系人","contactType":"电话|邮箱|微信|QQ|其他","contactValue":"联系方式"}。office 尽量匹配：' +
-      OFFICES.join("、") +
-      "。未提到的字段用空字符串。\n口述内容：" +
+      "你是校园失物招领表单助手。只根据口述提取捡到地点，不要编造。只输出一个 JSON 对象，不要 Markdown：" +
+      '{"place":"捡到地点","office":"逸夫楼316","contact":"","contactType":"","contactValue":""}' +
+      "。领取地点固定是逸夫楼316，联系人留空。未提到地点时 place 用空字符串。\n口述内容：" +
       transcript;
     const result = await completion([{ role: "user", content: prompt }], 400);
     const start = result.indexOf("{"),

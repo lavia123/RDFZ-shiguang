@@ -10,12 +10,9 @@ export interface Config {
   tokenSecret: string;
   aiKey: string;
   production: boolean;
-  /**
-   * 试用登录夹具。学校平台登录接入前默认开启；
-   * 设 SHIGUANG_TEST_ACTORS=0 可关闭。不是真实平台登录。
-   */
+  /** 仅非生产、且显式打开时允许选择服务端测试身份。不是平台登录。 */
   testActors: boolean;
-  /** 试用身份打开且显式允许时，才可跳过尚未接入的审核。 */
+  /** 仅测试身份打开时，才允许跳过尚未接入的审核。生产环境永远关闭。 */
   testReviewAllow: boolean;
   /** 本地试用时的默认夹具键。请求没有指定测试身份时才使用。 */
   devActor: string;
@@ -32,10 +29,7 @@ export function configFromEnv(): Config {
   const production =
     process.env.NODE_ENV === "production" ||
     process.argv.includes("--production");
-  // 平台登录接入前默认开放试用账号；部署生产环境也可登录拾光。
-  const testActors =
-    !process.env.RDFZ_APPLICATION_TOKEN &&
-    process.env.SHIGUANG_TEST_ACTORS !== "0";
+  const testActors = !production && process.env.SHIGUANG_TEST_ACTORS === "1";
   return {
     root,
     publicDir: path.resolve(import.meta.dirname, "../public"),
@@ -52,7 +46,8 @@ export function configFromEnv(): Config {
     aiKey: process.env.DEEPSEEK_API_KEY?.trim() || "",
     production,
     testActors,
-    testReviewAllow: testActors && process.env.SHIGUANG_TEST_REVIEW === "allow",
+    testReviewAllow:
+      testActors && process.env.SHIGUANG_TEST_REVIEW === "allow",
     devActor:
       testActors && /^[a-z]{1,16}$/.test(process.env.SHIGUANG_DEV_ACTOR || "")
         ? process.env.SHIGUANG_DEV_ACTOR!.trim()

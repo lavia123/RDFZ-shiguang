@@ -1,5 +1,23 @@
 import type { FoundModel } from "../hooks/useFound";
-import { CONTACT_TYPES } from "../../shared/constants";
+import { CONTACT_TYPES, FIXED_OFFICE } from "../../shared/constants";
+import { formatReviewIssue } from "../../shared/review-labels";
+import type { ReviewIssue } from "../../shared/identity";
+
+function FieldIssue({
+  field,
+  issues,
+}: {
+  field: string;
+  issues: ReviewIssue[];
+}) {
+  const rows = issues.filter((issue) => issue.field === field);
+  if (!rows.length) return null;
+  return (
+    <span className="field-error">
+      {rows.map((issue) => issue.message).join("；")}
+    </span>
+  );
+}
 export function FoundPanel({
   active,
   m,
@@ -12,11 +30,8 @@ export function FoundPanel({
   return (
     <section className={"panel" + (active ? " active" : "")} id="panel-found">
       <div className="panel-head">
-        <h1>拍照上传捡到的物品</h1>
-        <p>
-          物品描述可由拍照后 AI
-          识别；场所、招领处与联系信息也可从一段文字一键提取。
-        </p>
+        <h1>我捡到了</h1>
+        <p>拍一张照片，写清楚是什么。东西统一交到逸夫楼316。</p>
       </div>
       <div className="found-grid">
         <div className="camera-box">
@@ -39,8 +54,8 @@ export function FoundPanel({
               id="previewHint"
               hidden={!!m.image || m.live}
             >
-              <strong>准备拍摄</strong>
-              点击下方按钮打开摄像头，或从相册选择照片
+              <strong>先拍一张</strong>
+              打开摄像头拍照，或者从相册选一张
             </div>
           </div>
           <div className="cam-actions">
@@ -55,7 +70,7 @@ export function FoundPanel({
                 } else void m.startCamera();
               }}
             >
-              {m.live ? "关闭摄像头" : "打开摄像头"}
+              {m.live ? "关掉摄像头" : "打开摄像头"}
             </button>
             <button
               type="button"
@@ -89,7 +104,7 @@ export function FoundPanel({
           </div>
           <div className="ai-box">
             <div className="ai-box-head">
-              <div className="label">AI 识别</div>
+              <div className="label">照片说明</div>
             </div>
             <div
               className={"ai-status" + (m.thinking ? " thinking" : "")}
@@ -111,10 +126,13 @@ export function FoundPanel({
         >
           <input type="hidden" id="editId" value={m.editId} />
           <div className="text-fill-panel">
+            <p className="hint">
+              想少打字？把一段话贴在下面，点按钮。只会填「在哪捡到的」，不会改领取地点，也不用写联系人。
+            </p>
             <textarea
               id="fillText"
               rows={2}
-              placeholder="可粘贴一段说明，例如：图书馆二楼捡的，交图书馆总服务台，联系人小唐，电话13800138000"
+              placeholder="例如：我在图书馆二楼自习室捡到一个蓝色水杯"
               value={m.fillText}
               onChange={(e) => m.setFillText(e.currentTarget.value)}
             ></textarea>
@@ -125,63 +143,55 @@ export function FoundPanel({
               disabled={m.fillBusy}
               onClick={() => void m.extract()}
             >
-              {m.fillBusy ? "提取中…" : "从文字提取"}
+              {m.fillBusy ? "正在填写…" : "填上捡到地点"}
             </button>
           </div>
           {m.reviewIssues.length > 0 && (
             <div className="review-issues" role="alert">
-              <strong>审核未通过</strong>
+              <strong>这里需要改</strong>
               <ul>
                 {m.reviewIssues.map((issue, index) => (
                   <li key={`${issue.field}-${index}`}>
-                    {issue.field !== "general" ? `${issue.field}：` : ""}
-                    {issue.message}
+                    {formatReviewIssue(issue)}
                   </li>
                 ))}
               </ul>
             </div>
           )}
+          <FieldIssue field="image" issues={m.reviewIssues} />
           <label>
             物品描述
-            <span className="hint">拍照后 AI 自动识别，可修改补充</span>
+            <span className="hint">写清颜色和样子，别人才能认出来。拍照后也可能自动填上，你可以改。</span>
             <textarea
               id="description"
-              placeholder="例如：粉红色水杯 / 上面写有 1356 的饭卡"
+              placeholder="例如：粉色水杯，杯身写着 1356"
               value={m.form.description}
               onChange={(e) => m.setField("description", e.currentTarget.value)}
               aria-invalid={m.reviewIssues.some((i) => i.field === "description")}
             ></textarea>
+            <FieldIssue field="description" issues={m.reviewIssues} />
           </label>
+          <div>
+            <span className="field-label">领取地点</span>
+            <p className="office-fixed" id="office">
+              {FIXED_OFFICE}
+            </p>
+            <span className="hint">全校都交到这里，不用自己填。</span>
+          </div>
           <label>
-            所在失物招领处
-            <input
-              id="office"
-              placeholder="例如：逸夫楼316"
-              value={m.form.office}
-              onChange={(e) => m.setField("office", e.currentTarget.value)}
-            />
-          </label>
-          <label>
-            捡到场所
+            在哪捡到的（可不填）
             <input
               id="place"
-              placeholder="例如：图书馆二楼自习室 / 食堂三楼窗口旁"
+              placeholder="例如：图书馆二楼自习室"
               value={m.form.place}
               onChange={(e) => m.setField("place", e.currentTarget.value)}
+              aria-invalid={m.reviewIssues.some((i) => i.field === "place")}
             />
+            <FieldIssue field="place" issues={m.reviewIssues} />
           </label>
           <label>
-            联系人（选填）
-            <input
-              id="contact"
-              placeholder="例如：小唐 / 某某老师"
-              value={m.form.contact}
-              onChange={(e) => m.setField("contact", e.currentTarget.value)}
-            />
-          </label>
-          <label>
-            联系方式（选填）
-            <span className="hint">可选电话、邮箱、微信等</span>
+            联系方式（可不填）
+            <span className="hint">名字已经用学校账号了。想留电话或微信可以填，不填也行。</span>
             <div className="contact-row">
               <select
                 id="contactType"
@@ -207,12 +217,13 @@ export function FoundPanel({
                 }
               />
             </div>
+            <FieldIssue field="contactValue" issues={m.reviewIssues} />
           </label>
           <label>
-            备注（选填）
+            再补一句（可不填）
             <input
               id="note"
-              placeholder="例如：放在柜台抽屉里 / 杯盖单独保管"
+              placeholder="例如：杯盖单独放着"
               value={m.form.note}
               onChange={(e) => m.setField("note", e.currentTarget.value)}
             />
@@ -223,13 +234,7 @@ export function FoundPanel({
             id="btnSubmit"
             disabled={m.busy}
           >
-            {m.busy
-              ? m.editId
-                ? "审核保存中…"
-                : "审核提交中…"
-              : m.editId
-                ? "保存修改"
-                : "提交到失物招领"}
+            {m.busy ? "正在提交…" : m.editId ? "保存修改" : "发布招领"}
           </button>
           <button
             type="button"

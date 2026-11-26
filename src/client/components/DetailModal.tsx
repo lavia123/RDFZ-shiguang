@@ -45,12 +45,11 @@ export function DetailModal({
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const [photoZoom, setPhotoZoom] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const scrollAtOpen = useRef(initialScroll);
   const working = useRef(false);
   useLayoutEffect(() => {
-    if (panelRef.current) panelRef.current.scrollTop = scrollAtOpen.current;
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollAtOpen.current;
   }, []);
   const admin = session.kind === "admin";
   const student = session.kind === "student";
@@ -71,7 +70,7 @@ export function DetailModal({
   function selfClaim() {
     if (
       !confirm(
-        "确认实物已经交给你，并由本人登记领取？这不会显示为老师已核验。",
+        "确认东西已经给你了？这只是你自己登记，老师还没核对。",
       )
     )
       return;
@@ -79,10 +78,10 @@ export function DetailModal({
   }
   function deliver() {
     if (!claimantUserId.trim()) {
-      notify("请填写领取学生的平台用户 ID");
+      notify("请先填写领走的同学账号");
       return;
     }
-    if (!confirm("确认已经核对身份并完成交付？")) return;
+    if (!confirm("确认已经核对过，可以把东西交给这位同学？")) return;
     void run("deliver", { claimantUserId: claimantUserId.trim(), note });
   }
   return (
@@ -95,43 +94,30 @@ export function DetailModal({
     >
       <div
         className="modal-panel"
-        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="detailTitle"
       >
-        <button
-          type="button"
-          className="detail-photo-btn"
-          id="detailImgBtn"
-          aria-label="点击放大查看照片"
-          onClick={() => setPhotoZoom(true)}
-        >
-          <img id="detailImg" alt="物品照片" src={appUrl(item.image)} />
-        </button>
+        <div className="modal-scroll" ref={scrollRef}>
+        <img id="detailImg" alt="物品照片" src={appUrl(item.image)} />
         <div className="modal-body">
           <div id="detailBadge">
             <StatusBadge item={item} />
-            {item.highValue && <div className="badge badge-locked">高价值</div>}
+            {item.highValue && <div className="badge badge-locked">贵重物品</div>}
           </div>
           <h2 id="detailTitle">{item.description}</h2>
-          <DetailRow label="捡到场所" value={item.place} />
+          <DetailRow label="在哪捡到的" value={item.place || "没写"} />
           <DetailRow label="发布时间" value={formatTime(item.createdAt)} />
-          <DetailRow label="招领处" value={item.office || "未填写"} />
-          {item.note ? <DetailRow label="备注" value={item.note} /> : null}
-          <DetailRow label="当前保管" value={item.custody.label} />
-          {item.contactVisible && (
+          <DetailRow label="领取地点" value={item.office || "逸夫楼316"} />
+          <DetailRow label="现在在哪" value={item.custody.label} />
+          {item.contactVisible && (item.contact || item.contactValue) && (
             <div id="sensitiveBlock">
-              <DetailRow label="联系人" value={item.contact || "未填写"} />
-              <DetailRow label="联系方式" value={formatContactWay(item)} />
-            </div>
-          )}
-          {item.highValue && open && (
-            <div className="locked-note" id="highValueNote">
-              高价值物品需要老师核对身份和归属后再交付。学生只能提出领取意向，不能自行确认领走。
-              {item.custody.teacherReceived
-                ? " 实物已交到老师处。"
-                : " 目前尚未交到老师处，还不能完成交付。"}
+              {item.contact && (
+                <DetailRow label="联系人" value={item.contact} />
+              )}
+              {item.contactValue && (
+                <DetailRow label="联系方式" value={formatContactWay(item)} />
+              )}
             </div>
           )}
           {item.claimVisible && item.claim && (
@@ -153,33 +139,54 @@ export function DetailModal({
           )}
           {item.status === "claimed" && !item.claimVisible && (
             <div className="locked-note" id="claimHiddenNote">
-              该物品已领取。领取人信息只对本人和管理员可见。
+              已经有人领走了。领走的人是谁，只有本人和老师能看到。
             </div>
           )}
           {admin && item.legacyVerification && (
             <DetailRow
               label="历史核对"
-              value={`记录于 ${formatTime(item.legacyVerification.at)}，不代表本次已交付${item.legacyVerification.note ? "：" + item.legacyVerification.note : ""}`}
+              value={`这是以前的记录（${formatTime(item.legacyVerification.at)}），不代表这次已经交给同学${item.legacyVerification.note ? "：" + item.legacyVerification.note : ""}`}
             />
           )}
           {admin && (
             <div id="detailViewLogs" className="claim-box">
-              <strong>历史查看记录（不再新增）</strong>
+              <strong>以前谁看过（现在不再增加）</strong>
               <div style={{ marginTop: "10px" }}>
                 <ViewLogs logs={item.viewLogs ?? []} />
               </div>
               {item.claimLog.length > 0 && (
                 <div style={{ marginTop: "12px" }}>
-                  <strong>交付留痕</strong>
+                  <strong>交给谁的记录</strong>
                   {item.claimLog.map((entry, index) => (
                     <div className="view-log-item" key={entry.at + index}>
                       {entry.name} · {entry.className} ·{" "}
-                      {entry.active ? "当前有效" : "已更正"}
+                      {entry.active ? "现在算数" : "已经改过"}
                       {entry.closeReason ? `：${entry.closeReason}` : ""}
                     </div>
                   ))}
                 </div>
               )}
+            </div>
+          )}
+        </div>
+        </div>
+        <div className="claim-dock" id="claimConditions">
+          <p className="claim-hint" id="claimHint">
+            {session.kind === "kiosk"
+              ? "这台电脑只能发布，不能在这里领取。"
+              : !open
+                ? "先看上面的照片和说明。"
+                : item.highValue
+                  ? "这是贵重物品。你只能说「这是我的」，老师核对后才会给你。"
+                  : session.kind === "guest"
+                    ? "看完上面的照片和说明，登录后才能登记领取。"
+                    : "如果东西已经给你了，点下面按钮自己登记。这还不是老师核对过。"}
+          </p>
+          {item.highValue && open && (
+            <div className="locked-note" id="highValueNote">
+              {item.custody.teacherReceived
+                ? "东西已经在老师那里，还要老师确认给你。"
+                : "东西还没交到老师那里，现在还不能领走。"}
             </div>
           )}
           <div className="modal-actions" id="detailActions">
@@ -190,12 +197,12 @@ export function DetailModal({
                 id="btnNeedLogin"
                 onClick={onNeedLogin}
               >
-                登录后登记领取
+                登录后领取
               </button>
             )}
             {session.kind === "kiosk" && (
               <p className="hint" id="kioskNoClaim">
-                公共终端只能发布，不能领取，也不能查看私人消息。
+                这台电脑只能发布，不能领取，也看不到私人消息。
               </p>
             )}
             {student && open && !item.highValue && (
@@ -206,7 +213,7 @@ export function DetailModal({
                 disabled={busy}
                 onClick={selfClaim}
               >
-                本人登记已领取
+                我已经拿到了
               </button>
             )}
             {student && open && item.highValue && (
@@ -217,7 +224,7 @@ export function DetailModal({
                 disabled={busy || item.myIntent}
                 onClick={() => void run("intent")}
               >
-                {item.myIntent ? "已提交领取意向" : "提出领取意向"}
+                {item.myIntent ? "已经说过这是我的" : "这是我的"}
               </button>
             )}
             {admin && open && !item.custody.teacherReceived && (
@@ -228,17 +235,17 @@ export function DetailModal({
                 disabled={busy}
                 onClick={() => void run("custody", { heldBy: "teacher" })}
               >
-                登记已交到老师处
+                已经交到老师那里
               </button>
             )}
             {admin && open && (
               <div className="claim-box" id="deliverBox">
-                <strong>确认交付</strong>
+                <strong>交给同学</strong>
                 <p className="hint">
-                  按平台用户 ID 查找学生。找不到时转平台确认，不能把管理员写成失主。
+                  填领走的同学账号。找不到就先问学校，不要填成老师自己。
                 </p>
                 <label>
-                  领取学生的平台用户 ID
+                  领走的同学账号
                   <input
                     id="claimUserId"
                     value={claimantUserId}
@@ -246,7 +253,7 @@ export function DetailModal({
                   />
                 </label>
                 <label>
-                  备注（选填）
+                  补一句（可不填）
                   <input
                     id="deliverNote"
                     value={note}
@@ -260,16 +267,16 @@ export function DetailModal({
                   disabled={busy}
                   onClick={deliver}
                 >
-                  确认交付
+                  确认交给这位同学
                 </button>
               </div>
             )}
             {admin && item.status === "claimed" && (
               <div className="claim-box" id="correctBox">
-                <strong>更正交付</strong>
-                <p className="hint">原经办记录会保留，不能直接删掉。</p>
+                <strong>改领走的人</strong>
+                <p className="hint">原来的记录会留下，不能直接删掉。</p>
                 <label>
-                  更正后的学生平台用户 ID（撤销则留空）
+                  改成哪位同学的账号（取消领取就留空）
                   <input
                     id="correctUserId"
                     value={claimantUserId}
@@ -296,7 +303,7 @@ export function DetailModal({
                     })
                   }
                 >
-                  更正领取人
+                  改成这位同学
                 </button>
                 <button
                   type="button"
@@ -305,7 +312,7 @@ export function DetailModal({
                   disabled={busy}
                   onClick={() => void run("reopen", { reason: reason.trim() })}
                 >
-                  撤销交付
+                  取消这次领取
                 </button>
               </div>
             )}
@@ -316,10 +323,10 @@ export function DetailModal({
                 id="btnWithdraw"
                 disabled={busy}
                 onClick={() => {
-                  if (confirm("确定撤下这条招领？")) void run("withdraw");
+                  if (confirm("撤下这条招领？别人就看不到了。")) void run("withdraw");
                 }}
               >
-                撤下
+                撤下这条
               </button>
             )}
             {admin && (
@@ -329,7 +336,7 @@ export function DetailModal({
                 id="btnAdminDelete"
                 onClick={() => onDelete(item)}
               >
-                删除帖子
+                删除这条
               </button>
             )}
             <button
@@ -343,16 +350,6 @@ export function DetailModal({
           </div>
         </div>
       </div>
-      {photoZoom ? (
-        <button
-          type="button"
-          className="photo-lightbox"
-          aria-label="关闭放大照片"
-          onClick={() => setPhotoZoom(false)}
-        >
-          <img src={appUrl(item.image)} alt="物品照片全貌" />
-        </button>
-      ) : null}
     </div>
   );
 }

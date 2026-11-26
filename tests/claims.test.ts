@@ -271,12 +271,12 @@ describe("identity, kiosk and delivery", () => {
       viewLogs: [],
     } as ItemRecord));
     const admin = await (await request(`/api/items/${id}`, undefined, "admin", "GET")).json();
-    expect(admin.item.claim.claimLabel).toBe("历史登记（未经平台身份核验）");
+    expect(admin.item.claim.claimLabel).toBe("以前登记的，老师这次没核对");
     expect(admin.item.claim.source).toBe("legacy");
     expect(admin.item.legacyVerification.note).toBe("旧锁定");
     expect(admin.item.id).toBe(id);
   });
-  it("hides withdrawn and unapproved images, and rejects disabled test headers", async () => {
+  it("hides withdrawn and unapproved images, and rejects production test headers", async () => {
     const created = await publish();
     const { item } = await created.json();
     expect((await fetch(base + item.image)).status).toBe(200);
@@ -288,7 +288,7 @@ describe("identity, kiosk and delivery", () => {
       404,
     );
     const production = createApp(
-      { ...config, production: true, testActors: false, testReviewAllow: false },
+      { ...config, production: true, testActors: true, testReviewAllow: true },
       store,
     );
     production.use(errorHandler);

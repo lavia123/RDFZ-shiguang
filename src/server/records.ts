@@ -124,7 +124,7 @@ export function canRead(record: ItemRecord, actor: CurrentActor): boolean {
   const row = normalizeRecord(record).item;
   if (actor.kind === "admin") return true;
   if (actor.userId && actor.userId === row.owner_id) return true;
-  return isApprovedVersion({ revision: row.revision ?? 1, publication: row.publication ?? null }) && row.status !== "withdrawn";
+  return isApprovedVersion(row) && row.status !== "withdrawn";
 }
 function toClaim(entry: DeliveryRecord): Claim {
   return {
@@ -162,7 +162,6 @@ export function publicItem(record: ItemRecord, actor: CurrentActor): Item {
     description: row.description,
     place: row.place,
     office: row.office,
-    note: row.note || "",
     image: row.image,
     createdAt: row.created_at,
     status: row.status,

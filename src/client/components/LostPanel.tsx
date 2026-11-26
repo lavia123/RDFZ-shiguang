@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, message } from "../api";
+import { ApiError, api, message } from "../api";
 import type { LostPost } from "../../shared/lost";
 import { appUrl } from "../paths";
+import { simplifyDescription } from "../simplify";
+import { formatReviewIssue } from "../../shared/review-labels";
+import type { ReviewIssue } from "../../shared/identity";
 
 interface Props {
   active: boolean;
@@ -15,8 +18,8 @@ function statusLabel(post: LostPost) {
 }
 
 function batchLabel(post: LostPost) {
-  if (post.batchHint === "pending_batch") return " · 已发布，将在每日配对后提醒";
-  if (post.batchHint === "no_candidates") return " · 本次暂未找到候选";
+  if (post.batchHint === "pending_batch") return " · 已发出，配对后会在消息里告诉你";
+  if (post.batchHint === "no_candidates") return " · 这次还没找到像的";
   return "";
 }
 
@@ -44,6 +47,7 @@ export function LostPanel({ active, notify }: Props) {
   const [busy, setBusy] = useState(false);
   const [listTab, setListTab] = useState<"active" | "history">("active");
   const [simpleWarned, setSimpleWarned] = useState(false);
+  const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
   const [recoverTarget, setRecoverTarget] = useState<LostPost | null>(null);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -54,7 +58,7 @@ export function LostPanel({ active, notify }: Props) {
 
   useEffect(() => {
     if (!active) return;
-    void refresh().catch((err) => notify("加载寻物失败：" + message(err)));
+    void refresh().catch((err) => notify("寻物列表没打开：" + message(err)));
   }, [active, refresh, notify]);
 
   useEffect(() => {
@@ -69,15 +73,16 @@ export function LostPanel({ active, notify }: Props) {
     if (busy) return;
     const text = description.trim();
     if (!text) {
-      notify("请填写物品描述");
+      notify("请先写丢了什么");
       return;
     }
     if (!forceSimple && isTooSimpleDescription(text) && !simpleWarned) {
-      window.alert("输入的物品描述太过简单，请更具体一点");
+      window.alert("写得太短了，补上颜色或样子，别人更好认。");
       setSimpleWarned(true);
       return;
     }
     setBusy(true);
+    setReviewIssues([]);
     try {
       const data = await api<{ post: LostPost; notice?: string }>(
         "/api/lost-posts",
@@ -98,8 +103,9 @@ export function LostPanel({ active, notify }: Props) {
       setSimpleWarned(false);
       setListTab("active");
       await refresh();
-      notify(data.notice || "已发布寻物");
+      notify(data.notice || "寻物已经发出");
     } catch (err) {
+      if (err instanceof ApiError && err.issues.length) setReviewIssues(err.issues);
       notify(message(err));
     } finally {
       setBusy(false);
@@ -116,9 +122,9 @@ export function LostPanel({ active, notify }: Props) {
       await refresh();
       notify(
         status === "found"
-          ? "已确认找回，可在历史发布中删除"
+          ? "已标成找回了，可以在以前的寻物里删掉"
           : status === "closed"
-            ? "已关闭寻物"
+            ? "这条寻物已关闭"
             : "已更新",
       );
     } catch (err) {
@@ -127,13 +133,13 @@ export function LostPanel({ active, notify }: Props) {
   }
 
   async function remove(post: LostPost) {
-    if (!window.confirm("确定删除这条寻物记录吗？删除后不可恢复。")) return;
+    if (!window.confirm("删掉这条寻物？删了就不能恢复。")) return;
     try {
       await api(`/api/lost-posts/${encodeURIComponent(post.id)}`, {
         method: "DELETE",
       });
       await refresh();
-      notify("已删除寻物记录");
+      notify("已删掉");
     } catch (err) {
       notify(message(err));
     }
@@ -147,29 +153,74 @@ export function LostPanel({ active, notify }: Props) {
       <div className="panel-head">
         <h1>发寻物</h1>
         <p>
-          丢失物品的同学可在此发布寻物启事（不必上传照片）。暂无 AI
-          时也可发布；每日配对后会在「消息」里提醒可能线索。
+          丢了什么就写在这里，不用拍照。写完点「精简一下」，去掉多余的话，只留下能认出来的特征。配对后会在「消息」里告诉你。
         </p>
       </div>
       <div className="form-grid" style={{ marginBottom: 24 }}>
-        <label>
-          物品描述（必填）
+        {reviewIssues.length > 0 && (
+          <div className="review-issues" role="alert">
+            <strong>这里需要改</strong>
+            <ul>
+              {reviewIssues.map((issue, index) => (
+                <li key={`${issue.field}-${index}`}>{formatReviewIssue(issue)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div>
+          <div className="simplify-row">
+            <label htmlFor="lostDescription">丢了什么</label>
+            <button
+              type="button"
+              className="btn btn-ghost btn-text-extract"
+              id="btnSimplify"
+              onClick={() => {
+                const next = simplifyDescription(description);
+                if (!description.trim()) {
+                  notify("先写一段描述，再点精简");
+                  return;
+                }
+                if (next === description.trim()) {
+                  notify("已经比较简短了");
+                  return;
+                }
+                setDescription(next);
+                setSimpleWarned(false);
+                notify("已去掉多余的话，你还可以再改");
+              }}
+            >
+              精简一下
+            </button>
+          </div>
+          <span className="hint">
+            写下颜色、样子、在哪丢的。问候和「谢谢」可以留给按钮删掉。
+          </span>
           <textarea
+            id="lostDescription"
             rows={4}
             value={description}
             onChange={(e) => {
               setDescription(e.currentTarget.value);
               setSimpleWarned(false);
             }}
-            placeholder="例如：灰色保温杯，杯盖有划痕"
+            placeholder="例如：灰色保温杯，杯盖有划痕，昨天落在图书馆"
+            aria-invalid={reviewIssues.some((issue) => issue.field === "description")}
           />
-        </label>
+          {reviewIssues.some((issue) => issue.field === "description") && (
+            <span className="field-error">
+              {reviewIssues
+                .filter((issue) => issue.field === "description")
+                .map((issue) => issue.message)
+                .join("；")}
+            </span>
+          )}
+        </div>
         <label>
-          可能丢失地点（可选）
+          可能丢在哪（可不填）
           <input
             value={place}
             onChange={(e) => setPlace(e.currentTarget.value)}
-            placeholder="不清楚可留空"
+            placeholder="记不清就留空"
           />
         </label>
         <div
@@ -180,7 +231,7 @@ export function LostPanel({ active, notify }: Props) {
           }}
         >
           <label>
-            丢失时间起（可选）
+            大概从哪天开始丢的（可不填）
             <input
               type="date"
               value={lostFrom}
@@ -188,7 +239,7 @@ export function LostPanel({ active, notify }: Props) {
             />
           </label>
           <label>
-            丢失时间止（可选）
+            到哪天为止（可不填）
             <input
               type="date"
               value={lostTo}
@@ -202,7 +253,7 @@ export function LostPanel({ active, notify }: Props) {
           disabled={busy || !description.trim()}
           onClick={() => void submit()}
         >
-          发布寻物
+          发出寻物
         </button>
       </div>
       <div className="lost-list-tabs" role="tablist" aria-label="寻物列表">
@@ -226,15 +277,15 @@ export function LostPanel({ active, notify }: Props) {
           }
           onClick={() => setListTab("history")}
         >
-          历史发布{historyPosts.length ? `（${historyPosts.length}）` : ""}
+          以前的{historyPosts.length ? `（${historyPosts.length}）` : ""}
         </button>
       </div>
       <div className="card-list">
         {shown.length === 0 && (
           <p className="muted">
             {listTab === "active"
-              ? "还没有进行中的寻物。发布后将在每日配对后提醒。"
-              : "还没有历史寻物。确认找回或关闭后会出现在这里。"}
+              ? "还没有正在找的东西。"
+              : "还没有以前的寻物。找回或关闭后会出现在这里。"}
           </p>
         )}
         {shown.map((post) => (
@@ -256,7 +307,7 @@ export function LostPanel({ active, notify }: Props) {
                   className="btn"
                   onClick={() => setRecoverTarget(post)}
                 >
-                  确认找回
+                  已经找回
                 </button>
                 <button
                   type="button"
@@ -291,7 +342,7 @@ export function LostPanel({ active, notify }: Props) {
           }}
         >
           <div className="confirm-card">
-            <p id="recoverConfirmTitle">确认已找回？</p>
+            <p id="recoverConfirmTitle">东西已经找回了？</p>
             <div className="confirm-actions">
               <button
                 type="button"

@@ -25,10 +25,8 @@ export function BrowsePanel({
   return (
     <section className={"panel" + (active ? " active" : "")} id="panel-browse">
       <div className="panel-head">
-        <h1>浏览捡到的物品</h1>
-        <p>
-          可以按关键词或时间查看已公开的招领。保管位置直接显示；个人联系方式不会因为已领取就公开。
-        </p>
+        <h1>看看捡到的东西</h1>
+        <p>这里是已经公开的招领。可以搜关键词，也可以按日期找。领取地点会直接写出来。</p>
       </div>
       <div className="toolbar">
         <label className="field grow">
@@ -36,7 +34,7 @@ export function BrowsePanel({
           <input
             type="search"
             id="searchInput"
-            placeholder="描述、招领处、场所或联系方式…"
+            placeholder="描述、地点或联系方式"
             value={search}
             onChange={(e) => onSearch(e.currentTarget.value)}
           />

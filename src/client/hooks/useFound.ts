@@ -6,19 +6,15 @@ import {
 import { appUrl } from "../paths";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiStatus, FillFields, Item } from "../../shared/types";
-import { DEFAULT_OFFICE, CONTACT_TYPES } from "../../shared/constants";
+import { FIXED_OFFICE, CONTACT_TYPES } from "../../shared/constants";
 import { ApiError, api, getPublisherId, message } from "../api";
 import type { ReviewIssue } from "../../shared/publication";
 import { compressImage, dataUrlToBlob, runLocalFallback } from "../images";
-import {
-  localExtractFillFields,
-  matchOffice,
-  matchContactType,
-} from "../recognition";
+import { localExtractFillFields } from "../recognition";
 const empty = {
   description: "",
   place: "",
-  office: DEFAULT_OFFICE,
+  office: FIXED_OFFICE,
   note: "",
   contact: "",
   contactType: "",
@@ -191,7 +187,7 @@ export function useFound(
   async function extract() {
     const spoken = fillText.trim();
     if (!spoken) {
-      notify("请先输入说明文字");
+      notify("先把一段话贴进来");
       document.getElementById("fillText")?.focus();
       return;
     }
@@ -221,27 +217,17 @@ export function useFound(
           usedAi = true;
         } catch (err) {
           if (ctrl.signal.aborted) return;
-          notify("AI 提取失败：" + message(err).slice(0, 60));
+          notify("自动填写没成功，你也可以自己写地点：" + message(err).slice(0, 40));
         }
       }
       if (ctrl.signal.aborted || token !== generation.current) return;
-      const office = matchOffice(fields.office),
-        contactType = matchContactType(fields.contactType, fields.contactValue);
-      const next = { ...fields, office, contactType };
-      setForm((f) => ({
-        ...f,
-        ...Object.fromEntries(Object.entries(next).filter(([, v]) => v)),
-      }));
-      const bits = [
-        fields.place ? "场所" : "",
-        office ? "招领处" : "",
-        fields.contact ? "联系人" : "",
-        fields.contactValue ? "联系方式" : "",
-      ].filter(Boolean);
+      if (fields.place) setForm((f) => ({ ...f, place: fields.place }));
       notify(
-        bits.length
-          ? (usedAi ? "已提取：" : "已填入：") + bits.join("、")
-          : "未提取到可填字段，请改写后再试",
+        fields.place
+          ? usedAi
+            ? "已填上捡到地点。领取地点仍是逸夫楼316。"
+            : "已填上捡到地点。领取地点不用改。"
+          : "这段话里没找到地点。可以自己写，也可以留空。",
       );
     } finally {
       if (fillRequest.current === ctrl) {
@@ -256,16 +242,10 @@ export function useFound(
       notify("请先拍照或从相册选择图片");
       return;
     }
-    for (const [field, tip] of [
-      ["description", "请填写物品描述"],
-      ["office", "请填写所在失物招领处"],
-      ["place", "请填写捡到场所"],
-    ] as const) {
-      if (!form[field].trim()) {
-        notify(tip);
-        document.getElementById(field)?.focus();
-        return;
-      }
+    if (!form.description.trim()) {
+      notify("请先写物品描述");
+      document.getElementById("description")?.focus();
+      return;
     }
     submitting.current = true;
     setBusy(true);
@@ -273,29 +253,37 @@ export function useFound(
     try {
       const data = new FormData();
       data.append("ownerId", getPublisherId());
-      for (const [key, value] of Object.entries(form))
+      const payload = {
+        ...form,
+        office: FIXED_OFFICE,
+        contact: "",
+      };
+      for (const [key, value] of Object.entries(payload))
         data.append(key, value.trim());
       if (blob.current) data.append("image", blob.current, "item.jpg");
       await api(
         editId ? `/api/items/${encodeURIComponent(editId)}` : "/api/items",
         { method: editId ? "PATCH" : "POST", body: data },
       );
-      notify(
-        editId ? "修改已通过审核并公开" : "已通过审核并公开",
-      );
+      notify(editId ? "修改已经公开" : "已经公开，别人可以来看了");
       reset();
       await onPublished();
     } catch (err) {
       if (err instanceof ApiError && err.issues.length) {
         setReviewIssues(err.issues);
         const first = err.issues[0];
-        notify(first?.message || message(err));
-        if (first?.field && first.field !== "general" && first.field !== "image")
+        notify(message(err));
+        if (
+          first?.field &&
+          first.field !== "general" &&
+          first.field !== "image" &&
+          first.field !== "publication"
+        )
           document.getElementById(first.field)?.focus();
         setStatus(
           err.reviewStatus === "unavailable" || err.status === 503
-            ? "审核服务暂不可用，请稍后重试（照片与填写已保留）"
-            : "审核未通过，请按提示修改后重新提交（照片与填写已保留）",
+            ? "审核暂时不可用，照片和文字都还在，请稍后再试"
+            : "有几处需要改。看红色提示，照片和文字都还在。",
         );
       } else {
         notify(message(err));
@@ -311,10 +299,10 @@ export function useFound(
     setReviewIssues([]);
     setForm({
       description: item.description,
-      office: item.office || DEFAULT_OFFICE,
+      office: FIXED_OFFICE,
       place: item.place,
-      note: item.note || "",
-      contact: item.contact,
+      note: "",
+      contact: "",
       contactType: CONTACT_TYPES.includes(item.contactType)
         ? item.contactType
         : "",
@@ -322,13 +310,13 @@ export function useFound(
     });
     setImage(appUrl(item.image));
     blob.current = null;
-    setStatus("正在修改已发布内容。可更换照片或调整信息后保存。");
-    notify("已载入，可修改后保存");
+    setStatus("正在修改。可以换照片，也可以改文字，改完再保存。");
+    notify("已打开这条，改完再保存");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   const defaultStatus = ai.configured
-    ? `服务器 AI 已就绪（${ai.model}），拍照后自动识别。`
-    : "服务器尚未配置 AI，请联系管理人员配置后再使用识图。";
+    ? `拍照后会自动认出物品（${ai.model}），你也可以自己改。`
+    : "还没配好自动识别。自己写描述就行。";
   return {
     form,
     setField,

@@ -1,34 +1,22 @@
 import { appUrl } from "./paths";
-import type { ReviewIssue, ReviewStatus } from "../shared/publication";
+import { formatReviewIssue } from "../shared/review-labels";
 
-const TEST_ACTOR_KEY = "shiguang_test_actor_v1";
-
-/** 发布者身份由服务端会话决定。保留空实现，避免发布模块继续写入匿名 ID。 */
-export function getPublisherId() {
-  return "";
-}
-
-/** 本地试用：空字符串表示游客；键对应服务端 FIXTURE_ACTORS。 */
-export function getTestActor() {
-  return sessionStorage.getItem(TEST_ACTOR_KEY) || "";
-}
-
-export function setTestActor(key: string) {
-  if (!key) sessionStorage.removeItem(TEST_ACTOR_KEY);
-  else sessionStorage.setItem(TEST_ACTOR_KEY, key);
+export interface ApiIssue {
+  field: string;
+  message: string;
 }
 
 export class ApiError extends Error {
   status: number;
-  issues: ReviewIssue[];
-  reviewStatus?: ReviewStatus;
+  issues: ApiIssue[];
+  reviewStatus: string;
   constructor(
-    text: string,
+    message: string,
     status: number,
-    issues: ReviewIssue[] = [],
-    reviewStatus?: ReviewStatus,
+    issues: ApiIssue[] = [],
+    reviewStatus = "",
   ) {
-    super(text);
+    super(message);
     this.name = "ApiError";
     this.status = status;
     this.issues = issues;
@@ -36,6 +24,23 @@ export class ApiError extends Error {
   }
 }
 
+function readIssues(data: unknown): ApiIssue[] {
+  if (!data || typeof data !== "object" || !("issues" in data)) return [];
+  const issues = (data as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) return [];
+  return issues.flatMap((issue) => {
+    if (!issue || typeof issue !== "object") return [];
+    const field =
+      "field" in issue && issue.field ? String(issue.field) : "general";
+    const message = "message" in issue ? String(issue.message || "").trim() : "";
+    return message ? [{ field, message }] : [];
+  });
+}
+
+/** 发布者身份由服务端会话决定。保留空实现，避免发布模块继续写入匿名 ID。 */
+export function getPublisherId() {
+  return "";
+}
 export async function api<T>(
   url: string,
   options: RequestInit & { json?: unknown } = {},
@@ -43,8 +48,6 @@ export async function api<T>(
   const { json, ...init } = options;
   const headers = new Headers(init.headers);
   if (json !== undefined) headers.set("Content-Type", "application/json");
-  const testActor = getTestActor();
-  if (testActor) headers.set("X-Test-Actor", testActor);
   let response: Response;
   try {
     response = await fetch(appUrl(url), {
@@ -58,22 +61,16 @@ export async function api<T>(
   }
   const data = (await response.json().catch(() => ({}))) as T & {
     error?: string;
-    status?: ReviewStatus;
-    issues?: ReviewIssue[];
+    status?: string;
   };
   if (!response.ok) {
-    const reviewStatus =
-      data.status ||
-      (response.status === 503
-        ? "unavailable"
-        : response.status === 422
-          ? "rejected"
-          : undefined);
+    const issues = readIssues(data);
+    const detail = issues.map(formatReviewIssue).filter(Boolean).join("；");
     throw new ApiError(
-      data.error || `请求失败 (${response.status})`,
+      detail || data.error || `请求失败 (${response.status})`,
       response.status,
-      Array.isArray(data.issues) ? data.issues : [],
-      reviewStatus,
+      issues,
+      typeof data.status === "string" ? data.status : "",
     );
   }
   return data;

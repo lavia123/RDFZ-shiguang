@@ -282,6 +282,24 @@ describe("API behavior and file boundaries", () => {
     expect(response.status).toBe(201);
     const { item } = await response.json();
     expect(item.ownerId).toBe("stu_fixture");
+    expect(item.office).toBe("逸夫楼316");
+    expect(item.place).toBe("图书馆");
+    const optional = new FormData();
+    optional.set("description", "没有地点的伞");
+    optional.set("office", "随便写的地方");
+    optional.set("place", "");
+    optional.set("contact", "假联系人");
+    optional.set("image", new Blob([image], { type: "image/png" }), "image.png");
+    const optionalResponse = await fetch(base + "/api/items", {
+      method: "POST",
+      body: optional,
+      headers: { "X-Test-Actor": "student" },
+    });
+    expect(optionalResponse.status).toBe(201);
+    const optionalItem = (await optionalResponse.json()).item;
+    expect(optionalItem.office).toBe("逸夫楼316");
+    expect(optionalItem.place).toBe("");
+    expect(optionalItem.contact).toBe("");
     expect(
       (
         await request(

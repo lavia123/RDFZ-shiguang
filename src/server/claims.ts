@@ -8,7 +8,11 @@ import {
   isStationUser,
   normalizeRecord,
 } from "./records.js";
-import type { CurrentActor, LookupResult } from "../shared/identity.js";
+import {
+  claimLabel,
+  type CurrentActor,
+  type LookupResult,
+} from "../shared/identity.js";
 import type { DeliveryRecord, ItemRecord } from "../shared/types.js";
 export interface ClaimContext {
   store: FileStore;
@@ -41,34 +45,34 @@ async function resolveClaimant(
   actor: CurrentActor,
   userId: string,
 ) {
-  if (!userId) throw new HttpError(400, "请提供领取学生的平台用户 ID");
+  if (!userId) throw new HttpError(400, "请先填写领走的同学账号");
   if (isStationUser(userId, ctx.stationUserIds))
-    throw new HttpError(400, "公共账号不能作为领取人");
+    throw new HttpError(400, "公共电脑的账号不能领东西");
   if (userId === actor.userId)
-    throw new HttpError(400, "管理员不能把自己写成失主");
+    throw new HttpError(400, "不能把老师自己写成领走的人");
   const found = await ctx.lookup(userId);
   if (found.status === "unavailable")
     throw new HttpError(
       503,
-      "学生名单检索尚未由平台提供，请转平台方确认，不能在本地新建学生账号",
+      "学校名单还没接上。先问学校确认这位同学，不能在这里新建账号。",
     );
   if (found.status === "absent")
-    throw new HttpError(404, "平台没有这名学生，不能只按自报姓名领取");
+    throw new HttpError(404, "学校里没有这名同学，不能只凭自己报的名字领取");
   return found.student;
 }
 export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   app.post("/api/items/:id/claim", async (req, res) => {
     const actor = await ctx.actorOf(req);
     if (actor.kind !== "student" || !actor.userId)
-      throw new HttpError(403, "只有学生本人可以登记领取，公共终端不能领取");
+      throw new HttpError(403, "只有学生本人可以登记。这台电脑不能领取。");
     const record = await ctx.store.mutate(text(req.params.id), (current) => {
       const next = requireRecord(current);
       if (!canRead(next, actor)) throw new HttpError(404, "帖子不存在");
       const row = next.item;
       if (row.status !== "open" || activeDelivery(next))
-        throw new HttpError(409, "该物品已有有效交付");
+        throw new HttpError(409, "已经有人领走了");
       if (row.high_value)
-        throw new HttpError(403, "高价值物品只能由管理员核验并交付后确认");
+        throw new HttpError(403, "贵重物品要老师核对后才能领走");
       const entry = delivery({
         claimantUserId: actor.userId || "",
         name: actor.name || "",
@@ -96,13 +100,13 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   app.post("/api/items/:id/intent", async (req, res) => {
     const actor = await ctx.actorOf(req);
     if (actor.kind !== "student" || !actor.userId)
-      throw new HttpError(403, "只有学生可以提出领取意向");
+      throw new HttpError(403, "只有学生可以来说这是我的");
     const record = await ctx.store.mutate(text(req.params.id), (current) => {
       const next = requireRecord(current);
       if (!canRead(next, actor)) throw new HttpError(404, "帖子不存在");
       const row = next.item;
       if (row.status !== "open")
-        throw new HttpError(409, "该物品已领取或已撤下");
+        throw new HttpError(409, "这件东西已经领走或撤下了");
       const intents = (row.intents || []).filter(
         (intent) => intent.userId !== actor.userId,
       );
@@ -120,7 +124,7 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   app.post("/api/items/:id/deliver", async (req, res) => {
     const actor = await ctx.actorOf(req);
     if (actor.kind !== "admin" || !actor.userId)
-      throw new HttpError(403, "需要管理员权限");
+      throw new HttpError(403, "只有老师可以操作");
     const student = await resolveClaimant(
       ctx,
       actor,
@@ -131,9 +135,9 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
       const next = requireRecord(current);
       const row = next.item;
       if (row.status !== "open" || activeDelivery(next))
-        throw new HttpError(409, "该物品已有有效交付");
+        throw new HttpError(409, "已经有人领走了");
       if (row.high_value && row.custody?.heldBy !== "teacher")
-        throw new HttpError(409, "高价值物品尚未交到老师处，不能完成交付");
+        throw new HttpError(409, "贵重物品还没交到老师那里，现在不能给");
       const entry = delivery({
         claimantUserId: student.userId,
         name: student.name,
@@ -150,7 +154,7 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
         className: entry.className,
         claimedAt: entry.at,
         source: "admin",
-        claimLabel: "老师核验后交付",
+        claimLabel: claimLabel("admin"),
         operatorUserId: entry.operatorUserId,
         note,
       };
@@ -161,10 +165,10 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   app.post("/api/items/:id/custody", async (req, res) => {
     const actor = await ctx.actorOf(req);
     if (actor.kind !== "admin" || !actor.userId)
-      throw new HttpError(403, "需要管理员权限");
+      throw new HttpError(403, "只有老师可以操作");
     const heldBy = text(req.body?.heldBy);
     if (heldBy !== "finder" && heldBy !== "station" && heldBy !== "teacher")
-      throw new HttpError(400, "请说明实物当前由谁保管");
+      throw new HttpError(400, "请写一下现在在谁手里");
     const record = await ctx.store.mutate(text(req.params.id), (current) => {
       const next = requireRecord(current);
       const row = next.item;
@@ -183,9 +187,9 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   app.post("/api/items/:id/claim/correct", async (req, res) => {
     const actor = await ctx.actorOf(req);
     if (actor.kind !== "admin" || !actor.userId)
-      throw new HttpError(403, "需要管理员权限");
+      throw new HttpError(403, "只有老师可以操作");
     const reason = text(req.body?.reason);
-    if (!reason) throw new HttpError(400, "更正必须注明原因");
+    if (!reason) throw new HttpError(400, "请写下修改原因");
     const nextUserId = text(req.body?.claimantUserId);
     const student = nextUserId
       ? await resolveClaimant(ctx, actor, nextUserId)
@@ -194,9 +198,9 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
       const next = requireRecord(current);
       const row = next.item;
       const active = (row.claim_log || []).find((entry) => entry.active);
-      if (!active) throw new HttpError(400, "没有可更正的交付记录");
+      if (!active) throw new HttpError(400, "没有可以修改的领取记录");
       if (student && row.high_value && row.custody?.heldBy !== "teacher")
-        throw new HttpError(409, "高价值物品尚未交到老师处，不能完成交付");
+        throw new HttpError(409, "贵重物品还没交到老师那里，现在不能给");
       active.active = false;
       active.closedAt = new Date().toISOString();
       active.closeReason = reason;
@@ -221,7 +225,7 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
         className: entry.className,
         claimedAt: entry.at,
         source: "admin",
-        claimLabel: "老师核验后交付",
+        claimLabel: claimLabel("admin"),
         operatorUserId: entry.operatorUserId,
         note: reason,
       };
@@ -232,17 +236,17 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   app.post("/api/items/:id/withdraw", async (req, res) => {
     const actor = await ctx.actorOf(req);
     if (actor.kind === "guest" || !actor.userId)
-      throw new HttpError(403, "需要学校平台登录，当前尚未接入");
+      throw new HttpError(403, "请先登录学校账号。登录还没接上，所以现在不能操作。");
     const record = await ctx.store.mutate(text(req.params.id), (current) => {
       const next = requireRecord(current);
       if (!canRead(next, actor)) throw new HttpError(404, "帖子不存在");
       const row = next.item;
       const admin = actor.kind === "admin";
       if (!admin && actor.userId !== row.owner_id)
-        throw new HttpError(403, "无权撤下");
+        throw new HttpError(403, "你不能撤下这条");
       if (!admin && row.status !== "open")
-        throw new HttpError(403, "已交付的物品只能由管理员撤下");
-      if (row.status === "withdrawn") throw new HttpError(400, "该帖已撤下");
+        throw new HttpError(403, "已经领走的，只有老师能撤下");
+      if (row.status === "withdrawn") throw new HttpError(400, "这条已经撤下了");
       row.status = "withdrawn";
       return next;
     });
@@ -250,9 +254,9 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   });
   app.post("/api/items/:id/high-value", async (req, res) => {
     const actor = await ctx.actorOf(req);
-    if (actor.kind !== "admin") throw new HttpError(403, "需要管理员权限");
+    if (actor.kind !== "admin") throw new HttpError(403, "只有老师可以操作");
     if (req.body?.highValue === false || req.body?.highValue === "false")
-      throw new HttpError(403, "不能在这里取消高价值标记");
+      throw new HttpError(403, "不能在这里取消贵重标记");
     const record = await ctx.store.mutate(text(req.params.id), (current) => {
       const next = requireRecord(current);
       next.item.high_value = true;

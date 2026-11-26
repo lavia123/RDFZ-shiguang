@@ -17,6 +17,8 @@ import {
 } from "./staging.js";
 import type { ItemRecord, ItemRow } from "../../shared/types.js";
 import { publicItem } from "../items.js";
+import { FIXED_OFFICE } from "../../shared/constants.js";
+import { formatReviewIssue } from "../../shared/review-labels.js";
 
 type PublishableRow = ItemRow & {
   revision: number;
@@ -49,7 +51,7 @@ function textFieldsFromBody(
   const fields: Record<string, string> = {
     description: text(body.description),
     place: text(body.place),
-    office: text(body.office),
+    office: FIXED_OFFICE,
   };
   if (mode === "kiosk") {
     fields.contact = text(body.contact);
@@ -65,11 +67,12 @@ function rejectReview(
 ) {
   res.status(reviewHttpStatus(review)).json({
     error:
-      review.status === "rejected"
-        ? "内容未通过审核"
+      review.issues.map(formatReviewIssue).filter(Boolean).join("；") ||
+      (review.status === "rejected"
+        ? "有内容不合适，请按提示改完再提交"
         : review.status === "uncertain"
-          ? "信息不够明确，请修改或重拍后再提交"
-          : "审核服务暂不可用，请稍后重试",
+          ? "暂时看不清楚，请改一改或重新拍照后再试"
+          : "审核暂时不可用，请稍后再试"),
     status: review.status,
     issues: review.issues,
   });
@@ -110,9 +113,7 @@ export function foundPublicationRouter(deps: {
     const body = (req.body || {}) as Record<string, unknown>;
     const mode = actor.kind === "kiosk" ? "kiosk" : "personal";
     const fields = textFieldsFromBody(body, mode);
-    if (!fields.description) throw new HttpError(400, "请填写物品描述");
-    if (!fields.office) throw new HttpError(400, "请选择失物招领处");
-    if (!fields.place) throw new HttpError(400, "请填写捡到场所");
+    if (!fields.description) throw new HttpError(400, "请先写物品描述");
     const imageRef = text(body.imageRef);
     if (!imageRef) throw new HttpError(400, "请先上传物品照片");
     await assertStagingOwner(deps.dataDir, imageRef, actor.userId);
@@ -202,9 +203,7 @@ export function foundPublicationRouter(deps: {
       },
       mode,
     );
-    if (!fields.description) throw new HttpError(400, "请填写物品描述");
-    if (!fields.office) throw new HttpError(400, "请选择失物招领处");
-    if (!fields.place) throw new HttpError(400, "请填写捡到场所");
+    if (!fields.description) throw new HttpError(400, "请先写物品描述");
     if (imageRef) await assertStagingOwner(deps.dataDir, imageRef, actor.userId);
 
     const revision = Math.max(0, pub.revision) + 1;

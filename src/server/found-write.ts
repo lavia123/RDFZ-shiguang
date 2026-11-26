@@ -15,6 +15,8 @@ import {
   type StationProfile,
 } from "../shared/identity.js";
 import type { ItemRecord, ItemRow } from "../shared/types.js";
+import { FIXED_OFFICE } from "../shared/constants.js";
+import { formatReviewIssue } from "../shared/review-labels.js";
 export interface FoundWriteContext {
   config: Config;
   store: FileStore;
@@ -35,19 +37,20 @@ function requireWriter(actor: CurrentActor) {
     actor.kind !== "kiosk" &&
     actor.kind !== "admin"
   )
-    throw new HttpError(403, "需要学校平台登录，当前尚未接入");
+    throw new HttpError(403, "请先登录学校账号。登录还没接上，所以现在不能发布。");
 }
 function reviewFailure(result: ReviewResult) {
   const fallback =
     result.status === "rejected"
-      ? "内容未通过审核，请按提示修改"
+      ? "有内容不合适，请按提示改完再提交"
       : result.status === "uncertain"
-        ? "暂时无法判断，请修改或重拍后再试"
-        : "内容审核暂不可用，请稍后再试";
+        ? "暂时看不清楚，请改一改或重新拍照后再试"
+        : "审核暂时不可用，请稍后再试";
+  const detail = result.issues.map(formatReviewIssue).filter(Boolean).join("；");
   return {
     status: result.status === "unavailable" ? 503 : 422,
     body: {
-      error: result.issues[0]?.message || fallback,
+      error: detail || fallback,
       issues: result.issues,
     },
   };
@@ -61,11 +64,15 @@ function stationContact(
     actor.kind === "kiosk"
       ? stations.find((item) => item.stationId === actor.stationId)
       : undefined;
-  let contact = text(body.contact);
   let contactType = text(body.contactType);
-  const contactValue = text(body.contactValue) || (actor.kind === "kiosk" ? station?.contactValue || "" : "");
-  if (actor.kind === "kiosk" && !contact) contact = station?.contactName || "";
-  if (actor.kind === "kiosk" && !contactType && contactValue) contactType = "其他";
+  const contactValue =
+    text(body.contactValue) ||
+    (actor.kind === "kiosk" ? station?.contactValue || "" : "");
+  let contact = "";
+  if (actor.kind === "kiosk") {
+    contact = station?.contactName || "";
+    if (!contactType && contactValue) contactType = "其他";
+  }
   return {
     contact,
     contactType,
@@ -77,7 +84,6 @@ function foundTexts(input: {
   description: string;
   office: string;
   place: string;
-  note: string;
   contact: string;
   contactType: string;
   contactValue: string;
@@ -87,7 +93,6 @@ function foundTexts(input: {
     description: input.description,
     office: input.office,
     place: input.place,
-    note: input.note,
     contact: input.contact,
     contactType: input.contactType,
     contactValue: input.contactValue,
@@ -103,12 +108,9 @@ export function registerFoundRoutes(app: Express, ctx: FoundWriteContext) {
       const actor = await ctx.actorOf(req);
       requireWriter(actor);
       const description = text(req.body?.description);
-      const office = text(req.body?.office);
+      const office = FIXED_OFFICE;
       const place = text(req.body?.place);
-      const note = text(req.body?.note).slice(0, 500);
-      if (!description) throw new HttpError(400, "请填写物品描述");
-      if (!office) throw new HttpError(400, "请填写所在失物招领处");
-      if (!place) throw new HttpError(400, "请填写捡到场所");
+      if (!description) throw new HttpError(400, "请先写物品描述");
       if (!req.file) throw new HttpError(400, "请上传物品照片");
       const contact = stationContact(actor, req.body || {}, ctx.stations);
       const high = resolveHighValue({
@@ -120,14 +122,7 @@ export function registerFoundRoutes(app: Express, ctx: FoundWriteContext) {
       const reviewed = await ctx.review({
         kind: "found",
         revision: 1,
-        texts: foundTexts({
-          description,
-          office,
-          place,
-          note,
-          ...contact,
-          highValue: high.value,
-        }),
+        texts: foundTexts({ description, office, place, ...contact, highValue: high.value }),
         images: [path.basename(req.file.path)],
       });
       if (reviewed.status !== "allowed") {
@@ -144,7 +139,6 @@ export function registerFoundRoutes(app: Express, ctx: FoundWriteContext) {
         description,
         office,
         place,
-        note,
         contact: contact.contact,
         contact_type: contact.contactType,
         contact_value: contact.contactValue,
@@ -198,17 +192,10 @@ export function registerFoundRoutes(app: Express, ctx: FoundWriteContext) {
         req.body?.description === undefined
           ? existing.description
           : text(req.body.description);
-      const office =
-        req.body?.office === undefined ? existing.office : text(req.body.office);
+      const office = FIXED_OFFICE;
       const place =
         req.body?.place === undefined ? existing.place : text(req.body.place);
-      const note =
-        req.body?.note === undefined
-          ? existing.note || ""
-          : text(req.body.note).slice(0, 500);
-      if (!description) throw new HttpError(400, "请填写物品描述");
-      if (!office) throw new HttpError(400, "请填写所在失物招领处");
-      if (!place) throw new HttpError(400, "请填写捡到场所");
+      if (!description) throw new HttpError(400, "请先写物品描述");
       const contactFields =
         req.body?.contact === undefined &&
         req.body?.contactType === undefined &&
@@ -257,7 +244,6 @@ export function registerFoundRoutes(app: Express, ctx: FoundWriteContext) {
           description,
           office,
           place,
-          note,
           contact: contact.contact,
           contactType: contact.contactType,
           contactValue: contact.contactValue,
@@ -285,7 +271,6 @@ export function registerFoundRoutes(app: Express, ctx: FoundWriteContext) {
         row.description = description;
         row.office = office;
         row.place = place;
-        row.note = note;
         row.contact = contact.contact;
         row.contact_type = contact.contactType;
         row.contact_value = contact.contactValue;

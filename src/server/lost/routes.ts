@@ -12,6 +12,7 @@ import type {
 import type { LostPost, LostPostInput } from "../../shared/lost.js";
 import type { ReviewResult } from "../../shared/publication.js";
 import { platformScope } from "../platform-scope.js";
+import { formatReviewIssue } from "../../shared/review-labels.js";
 
 function managesSchoolRecord(post: LostPost) {
   return (
@@ -22,9 +23,9 @@ function managesSchoolRecord(post: LostPost) {
 
 function requireStudent(actor: CurrentActor) {
   if (actor.kind === "guest" || !actor.userId)
-    throw new HttpError(401, "需要登录的学生身份才能发布或管理寻物");
+    throw new HttpError(401, "请先用学生账号登录，再发寻物");
   if (actor.kind === "kiosk")
-    throw new HttpError(403, "公共账号不能发布寻物或查看私人消息");
+    throw new HttpError(403, "公共电脑不能发寻物，也看不到私人消息");
   return actor as CurrentActor & { userId: string };
 }
 
@@ -38,10 +39,17 @@ function lostHoldReason(review: ReviewResult, editing: boolean): string | null {
     if (!danger) return null;
     return danger.message;
   }
+  const detail = review.issues.map(formatReviewIssue).filter(Boolean).join("；");
   if (review.status === "rejected") {
-    return editing ? "修改未通过审核，已保留原合规版本" : "寻物内容未通过审核";
+    return (
+      detail ||
+      (editing ? "这次修改没通过，原来的内容还在" : "这段寻物没通过审核")
+    );
   }
-  return editing ? "审核服务暂不可用，已保留原合规版本" : "审核服务暂不可用";
+  return (
+    detail ||
+    (editing ? "审核暂时不可用，原来的内容还在" : "审核暂时不可用，请稍后再发")
+  );
 }
 
 function parseInput(body: Record<string, unknown>): LostPostInput {
