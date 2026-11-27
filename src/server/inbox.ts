@@ -4,13 +4,16 @@ import { FIXTURE_ACTORS } from "./auth.js";
 import { developmentAdminUserIds } from "./development-identity.js";
 import { MessageStore } from "./messages/store.js";
 import type { InboxKind, MatchMessage } from "../shared/messages.js";
-import { CLAIM_DISPUTE_OPTION } from "../shared/messages.js";
+import {
+  CLAIM_DISPUTE_OPTION,
+  SCHOOL_ADMIN_MAILBOX,
+} from "../shared/messages.js";
 import { suggestHighValue } from "../shared/identity.js";
 import { DEEPSEEK_MODEL, DEEPSEEK_URL } from "./config.js";
 
-/** 本地/试用环境下的管理员收件人；正式平台目录接入前用夹具名单。 */
+/** 管理员收件人：始终含校级共享信箱；本地/试用再叠加夹具名单。 */
 export function adminRecipientIds(config: Config): string[] {
-  const ids = new Set<string>();
+  const ids = new Set<string>([SCHOOL_ADMIN_MAILBOX]);
   if (config.testActors) {
     for (const actor of Object.values(FIXTURE_ACTORS)) {
       if (actor.kind === "admin" && actor.userId) ids.add(actor.userId);

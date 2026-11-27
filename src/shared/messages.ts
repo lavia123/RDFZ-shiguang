@@ -41,3 +41,6 @@ export interface MatchMessageView extends MatchMessage {
 }
 
 export const CLAIM_DISPUTE_OPTION = "我的东西被冒领了？";
+
+/** 校级管理员共享信箱：平台模式没有固定管理员名单时也能投递。 */
+export const SCHOOL_ADMIN_MAILBOX = "shiguang_school_admin";

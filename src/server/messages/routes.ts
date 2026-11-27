@@ -10,7 +10,8 @@ import type {
   IsApprovedVersion,
   ResolveActor,
 } from "../../shared/b-contracts.js";
-import type { MatchMessageView } from "../../shared/messages.js";
+import type { MatchMessage, MatchMessageView } from "../../shared/messages.js";
+import { SCHOOL_ADMIN_MAILBOX } from "../../shared/messages.js";
 import { foundContentRevision, isOpenFoundItem } from "../matching/found.js";
 
 function requireMailbox(actor: CurrentActor) {
@@ -18,6 +19,19 @@ function requireMailbox(actor: CurrentActor) {
     throw new HttpError(401, "需要登录身份才能查看消息");
   if (actor.kind === "kiosk") throw new HttpError(403, "公共端不显示私人消息");
   return actor as CurrentActor & { userId: string };
+}
+
+function ownsMessage(
+  actor: CurrentActor & { userId: string },
+  msg: MatchMessage,
+) {
+  if (msg.recipientUserId === actor.userId) return true;
+  const kind = msg.kind || "match";
+  return (
+    actor.kind === "admin" &&
+    msg.recipientUserId === SCHOOL_ADMIN_MAILBOX &&
+    (kind === "claim_dispute" || kind === "high_value_alert")
+  );
 }
 
 export function messagesRouter(deps: {
@@ -107,7 +121,16 @@ export function messagesRouter(deps: {
 
   router.get("/messages", async (req, res) => {
     const actor = requireMailbox(await actorOf(req));
-    const list = await deps.messages.listForUser(actor.userId);
+    const personal = await deps.messages.listForUser(actor.userId);
+    const shared =
+      actor.kind === "admin"
+        ? await deps.messages.listForUser(SCHOOL_ADMIN_MAILBOX)
+        : [];
+    const byId = new Map<string, (typeof personal)[number]>();
+    for (const m of [...personal, ...shared]) {
+      if (ownsMessage(actor, m)) byId.set(m.id, m);
+    }
+    const list = [...byId.values()];
     list.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     const visible = await Promise.all(
       list.map(async (m) => ((await inScope(m)) ? m : null)),
@@ -125,7 +148,7 @@ export function messagesRouter(deps: {
   router.get("/messages/:id", async (req, res) => {
     const actor = requireMailbox(await actorOf(req));
     const msg = await deps.messages.read(text(req.params.id));
-    if (!msg || msg.recipientUserId !== actor.userId || !(await inScope(msg)))
+    if (!msg || !ownsMessage(actor, msg) || !(await inScope(msg)))
       throw new HttpError(404, "消息不存在");
     res.json({ message: await decorate(msg) });
   });
@@ -135,11 +158,7 @@ export function messagesRouter(deps: {
     const updated = await deps.messages.mutate(
       text(req.params.id),
       async (cur) => {
-        if (
-          !cur ||
-          cur.recipientUserId !== actor.userId ||
-          !(await inScope(cur))
-        )
+        if (!cur || !ownsMessage(actor, cur) || !(await inScope(cur)))
           throw new HttpError(404, "消息不存在");
         return {
           ...cur,
@@ -156,11 +175,7 @@ export function messagesRouter(deps: {
     const updated = await deps.messages.mutate(
       text(req.params.id),
       async (cur) => {
-        if (
-          !cur ||
-          cur.recipientUserId !== actor.userId ||
-          !(await inScope(cur))
-        )
+        if (!cur || !ownsMessage(actor, cur) || !(await inScope(cur)))
           throw new HttpError(404, "消息不存在");
         return {
           ...cur,
