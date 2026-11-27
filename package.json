@@ -49,7 +49,7 @@
     "vitest": "^4.0.13"
   },
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=.env src/server/index.ts",
+    "dev": "tsx watch --env-file-if-exists=.env src/server/index.ts --local-dev",
     "build": "vite build && node scripts/build-server.mjs",
     "start": "node --env-file-if-exists=.env dist/server/index.mjs --production",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
@@ -58,6 +58,7 @@
     "test": "vitest run",
     "test:ui": "playwright test",
     "import:data": "tsx src/server/import-data.ts",
-    "test:lesson": "NEXT_PUBLIC_BASE_PATH=/lesson-app/l_runtime_test pnpm build && node --test tests/lesson-runtime.mjs"
+    "test:lesson": "NEXT_PUBLIC_BASE_PATH=/lesson-app/l_runtime_test pnpm build && node --test tests/lesson-runtime.mjs",
+    "test:development": "node --test tests/development-runtime.mjs"
   }
 }

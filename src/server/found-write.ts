@@ -37,7 +37,7 @@ function requireWriter(actor: CurrentActor) {
     actor.kind !== "kiosk" &&
     actor.kind !== "admin"
   )
-    throw new HttpError(403, "请先登录学校账号。登录还没接上，所以现在不能发布。");
+    throw new HttpError(403, "请先登录学校账号后发布。");
 }
 function reviewFailure(result: ReviewResult) {
   const fallback =

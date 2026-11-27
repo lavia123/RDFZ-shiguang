@@ -1,7 +1,4 @@
-import {
-  foundFormContext,
-  type SessionView,
-} from "../../shared/identity";
+import { foundFormContext, type SessionView } from "../../shared/identity";
 export function FoundIdentityBanner({ session }: { session: SessionView }) {
   const form = foundFormContext(session);
   if (form.mode === "guest") return null;
@@ -18,8 +15,11 @@ export function FoundIdentityBanner({ session }: { session: SessionView }) {
       id="foundIdentity"
       data-found-mode={form.mode}
     >
-      用你的学校账号发布：{form.displayName || "未命名"} ·{" "}
-      {form.className || "未分班"}。不用再填姓名和手机号。
+      {session.provenance === "test"
+        ? "使用本地测试身份发布："
+        : "用你的学校账号发布："}
+      {form.displayName || "未命名"} · {form.className || "未分班"}
+      。不用再填姓名和手机号。
     </p>
   );
 }

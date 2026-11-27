@@ -30,6 +30,7 @@ import {
 } from "../shared/identity.js";
 import type { ItemRecord } from "../shared/types.js";
 export interface AppDeps {
+  provenance?: "platform" | "test";
   resolveActor?: (req: Request) => CurrentActor | Promise<CurrentActor>;
   reviewSubmission?: (
     candidate: ReviewCandidate,
@@ -96,7 +97,7 @@ export function createApp(
       session: sessionView(
         actor,
         stationFor(actor, stations),
-        deps.resolveActor ? "test" : actorProvenance(config, actor),
+        deps.provenance ?? (deps.resolveActor ? "test" : actorProvenance(config, actor)),
       ),
     });
   });
@@ -157,7 +158,7 @@ export function createApp(
   app.delete("/api/items/:id", async (req, res) => {
     const actor = await actorOf(req);
     if (actor.kind === "guest" || !actor.userId)
-      throw new HttpError(403, "需要学校平台登录，当前尚未接入");
+      throw new HttpError(403, "请先使用学校平台身份登录");
     let image = "";
     await store.mutate(text(req.params.id), (current) => {
       const row = normalizeRecord(requireRecord(current)).item;
@@ -176,10 +177,12 @@ export function createApp(
     const name = text(req.params.name);
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || name.includes(".."))
       throw new HttpError(404, "图片不存在");
+    const actor = await actorOf(req);
     const url = `/uploads/${name}`;
     const visible = (await store.list()).some((record) => {
       const row = normalizeRecord(record).item;
       return (
+        canRead(record, actor) &&
         row.image === url &&
         row.status !== "withdrawn" &&
         isApprovedVersion({
@@ -195,7 +198,8 @@ export function createApp(
     } catch {
       throw new HttpError(404, "图片不存在");
     }
-    res.sendFile(file);
+    // The authorized file may live under .data-development; never expose the directory.
+    res.sendFile(file, { dotfiles: "allow" });
   });
   app.use("/api", (_req, res) => res.status(404).json({ error: "接口不存在" }));
   return app;

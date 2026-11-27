@@ -54,7 +54,7 @@ async function resolveClaimant(
   if (found.status === "unavailable")
     throw new HttpError(
       503,
-      "学校名单还没接上。先问学校确认这位同学，不能在这里新建账号。",
+      "学校名单暂时无法读取，请稍后重试，不能在这里新建账号。",
     );
   if (found.status === "absent")
     throw new HttpError(404, "学校里没有这名同学，不能只凭自己报的名字领取");
@@ -236,7 +236,7 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   app.post("/api/items/:id/withdraw", async (req, res) => {
     const actor = await ctx.actorOf(req);
     if (actor.kind === "guest" || !actor.userId)
-      throw new HttpError(403, "请先登录学校账号。登录还没接上，所以现在不能操作。");
+      throw new HttpError(403, "请先登录学校账号后操作。");
     const record = await ctx.store.mutate(text(req.params.id), (current) => {
       const next = requireRecord(current);
       if (!canRead(next, actor)) throw new HttpError(404, "帖子不存在");

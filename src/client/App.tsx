@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiStatus, Item } from "../shared/types";
-import {
-  KIOSK_IDLE_MS,
-  guestActor,
-  sessionView,
-  type SessionView,
-} from "../shared/identity";
+import { KIOSK_IDLE_MS, type SessionView } from "../shared/identity";
 import { api, message } from "./api";
 import type { Panel } from "./state";
 import { sortItems } from "./utils";
 import { createIdleCountdown } from "./kiosk-idle";
+import { useSession } from "./hooks/useSession";
 import { useFound } from "./hooks/useFound";
 import { LoginRequired } from "./components/Entry";
 import { Header } from "./components/Header";
@@ -22,7 +18,6 @@ import { LostPanel } from "./components/LostPanel";
 import { MessagesPanel } from "./components/MessagesPanel";
 import type { DetailAction } from "./components/DetailModal";
 import "./styles/app.css";
-const guestSession = sessionView(guestActor(), null, "none");
 function formatIdle(ms: number) {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const minutes = Math.floor(total / 60);
@@ -30,15 +25,52 @@ function formatIdle(ms: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 export default function App() {
+  const { session, error, reload } = useSession();
+  const [needLogin, setNeedLogin] = useState(false);
+  if (!session)
+    return (
+      <main className="app">
+        <p role="status">{error || "正在读取身份…"}</p>
+        {error && (
+          <button className="btn" onClick={() => void reload()}>
+            重新读取
+          </button>
+        )}
+      </main>
+    );
+  return (
+    <>
+      <LoginRequired
+        open={needLogin}
+        session={session}
+        onClose={() => setNeedLogin(false)}
+        onChanged={async () => {
+          setNeedLogin(false);
+          await reload();
+        }}
+      />
+      <Workspace
+        key={`${session.provenance}:${session.kind}:${session.userId}:${session.className}`}
+        session={session}
+        onLogin={() => setNeedLogin(true)}
+      />
+    </>
+  );
+}
+function Workspace({
+  session,
+  onLogin,
+}: {
+  session: SessionView;
+  onLogin: () => void;
+}) {
   const modalScroll = useRef(0);
   const rememberModalScroll = () => {
     modalScroll.current =
       document.querySelector<HTMLElement>("#detailModal .modal-scroll")
         ?.scrollTop || 0;
   };
-  const [session, setSession] = useState<SessionView>(guestSession);
   const [panel, setPanel] = useState<Panel>("browse");
-  const [needLogin, setNeedLogin] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [ai, setAi] = useState<AiStatus>({ configured: false, model: "" });
   const [detail, setDetail] = useState("");
@@ -50,21 +82,22 @@ export default function App() {
   const refreshGeneration = useRef(0);
   const actions = useRef(new Set<string>());
   const notify = useCallback(
-    (text: string) => setToast((current) => ({ message: text, id: current.id + 1 })),
+    (text: string) =>
+      setToast((current) => ({ message: text, id: current.id + 1 })),
     [],
   );
   useEffect(() => {
     if (!toast.message) return;
-    const id = setTimeout(() => setToast((current) => ({ ...current, message: "" })), 2600);
+    const id = setTimeout(
+      () => setToast((current) => ({ ...current, message: "" })),
+      2600,
+    );
     return () => clearTimeout(id);
   }, [toast.id, toast.message]);
   useEffect(() => {
     const ctrl = new AbortController();
     void api<AiStatus>("/api/ai/status", { signal: ctrl.signal })
       .then(setAi)
-      .catch(() => {});
-    void api<{ session: SessionView }>("/api/session", { signal: ctrl.signal })
-      .then((data) => setSession(data.session))
       .catch(() => {});
     return () => ctrl.abort();
   }, []);
@@ -116,7 +149,7 @@ export default function App() {
   function onPanel(next: Panel) {
     if (session.kind === "kiosk" && next !== "found") return;
     if (session.kind === "guest" && next !== "browse") {
-      setNeedLogin(true);
+      onLogin();
       return;
     }
     if (next === "admin" && session.kind !== "admin") {
@@ -185,7 +218,10 @@ export default function App() {
       action === "reopen"
         ? { reason: (body as { reason?: string } | undefined)?.reason || "" }
         : body;
-    await api(`/api/items/${detail}/${path}`, { method: "POST", json: payload ?? {} });
+    await api(`/api/items/${detail}/${path}`, {
+      method: "POST",
+      json: payload ?? {},
+    });
     await refresh();
     notify(
       {
@@ -222,7 +258,6 @@ export default function App() {
     : [];
   return (
     <>
-      <LoginRequired open={needLogin} onClose={() => setNeedLogin(false)} />
       <div className="app" id="app">
         <Header
           ai={ai}
@@ -231,6 +266,7 @@ export default function App() {
           idleLabel={formatIdle(idleLeft)}
           onPanel={onPanel}
           onEndKiosk={endKiosk}
+          onLogin={onLogin}
         />
         <main>
           {panel === "found" && session.capabilities.publishFound && (
@@ -293,7 +329,7 @@ export default function App() {
             setDetail("");
           }}
           onDelete={(item) => void remove(item)}
-          onNeedLogin={() => setNeedLogin(true)}
+          onNeedLogin={() => onLogin()}
           onAction={detailAction}
         />
       )}

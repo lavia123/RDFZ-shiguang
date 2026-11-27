@@ -3,66 +3,146 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import express from "express";
 import { configFromEnv } from "./config.js";
-import { FileStore } from "./storage.js";
-import { createApp, errorHandler } from "./app.js";
-import { resolveActor } from "./auth.js";
-import { createDefaultReviewer } from "./moderation/review.js";
+import { errorHandler } from "./app.js";
+import { createBusinessRuntime } from "./business-runtime.js";
+import { readPlatformScope, verifyPlatformToken } from "./platform-bridge.js";
+import { platformScope } from "./platform-scope.js";
+import { stationFor } from "./auth.js";
+import { sessionView } from "../shared/identity.js";
 import {
-  createLostMatching,
-  type LostMatchingHandles,
-} from "./lost-matching/mount.js";
+  createDevelopmentIdentity,
+  DEVELOPMENT_STATIONS,
+} from "./development-identity.js";
+import { HttpError } from "./errors.js";
+
 const config = configFromEnv();
-const store = new FileStore(config.dataDir);
-let storeReady: Promise<FileStore> | undefined;
-const acquireStore = () =>
-  (storeReady ??= store.acquire().catch((error) => {
-    storeReady = undefined;
-    throw error;
-  }));
+const platform = config.identityMode === "platform";
+const development =
+  config.identityMode === "development"
+    ? createDevelopmentIdentity(config)
+    : undefined;
+const runtimes = new Map<
+  string,
+  Promise<Awaited<ReturnType<typeof createBusinessRuntime>>>
+>();
+function businessFor(dataDir: string) {
+  let pending = runtimes.get(dataDir);
+  if (!pending) {
+    const scoped = {
+      ...config,
+      dataDir,
+      ...(platform
+        ? { testActors: false, testReviewAllow: false, devActor: "" }
+        : {}),
+    };
+    pending = platformScope
+      .exit(() =>
+        createBusinessRuntime(scoped, config.identityMode ?? "standalone"),
+      )
+      .catch((error) => {
+        runtimes.delete(dataDir);
+        throw error;
+      });
+    runtimes.set(dataDir, pending);
+  }
+  return pending;
+}
+async function closeRuntimes() {
+  await Promise.all(
+    [...runtimes.values()].map(async (value) => {
+      const runtime = await value.catch(() => null);
+      await runtime?.close();
+    }),
+  );
+}
+
 try {
   const app = express();
   const routes = express.Router();
-  // 寻物和消息在拿到数据目录锁之后启动。健康检查不进入这里，也不抢锁。
-  const extras = express.Router();
-  let matching: LostMatchingHandles | undefined;
-  let starting: Promise<void> | undefined;
-  const startOwnedIntegrations = () => {
-    starting ??= (async () => {
-      matching = await createLostMatching({
-        config,
-        store,
-        resolveActor: ({ header }) =>
-          resolveActor({ header } as Parameters<typeof resolveActor>[0], config),
-        reviewSubmission: createDefaultReviewer(config),
-      });
-      matching.mountRoutes(extras);
-      matching.scheduler.start();
-    })().catch((error) => {
-      starting = undefined;
-      matching = undefined;
-      throw error;
+  routes.use("/api", (_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
+  if (platform)
+    routes.use((req, _res, next) => {
+      try {
+        verifyPlatformToken(req);
+        next();
+      } catch (error) {
+        next(error);
+      }
     });
-    return starting;
-  };
-  const stopOwnedIntegrations = async () => {
-    starting = undefined;
-    await matching?.scheduler.stop();
-    matching = undefined;
-  };
-  // Candidate health checks must not acquire the previous release's data lease.
-  routes.get("/api/health", (_req, res) => res.json({ ok: true }));
-  routes.use(["/api", "/uploads"], async (_req, _res, next) => {
-    try {
-      await acquireStore();
-      await startOwnedIntegrations();
+  if (development) {
+    routes.use((req, _res, next) => {
+      const origins = [
+        `http://localhost:${config.port}`,
+        `http://127.0.0.1:${config.port}`,
+      ];
+      if (
+        !origins.includes(`http://${req.headers.host}`) ||
+        (!["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+          !origins.includes(req.headers.origin ?? ""))
+      )
+        return next(new HttpError(403, "请从本地页面访问开发服务"));
       next();
+    });
+    routes.use("/api/development", development.router);
+  }
+  // Candidate health must not acquire any active release's data lease.
+  routes.get("/api/health", (_req, res) => res.json({ ok: true }));
+  const business = express.Router();
+  routes.use(async (req, res, next) => {
+    if (!req.path.startsWith("/api/") && !req.path.startsWith("/uploads/"))
+      return next();
+    const controller = new AbortController();
+    const abort = () => {
+      if (!res.writableFinished) controller.abort();
+    };
+    res.once("close", abort);
+    res.once("finish", () => res.removeListener("close", abort));
+    try {
+      if (platform || development) {
+        const scope = platform
+          ? readPlatformScope(req, controller.signal)
+          : development!.scope(req, controller.signal);
+        if (req.method === "GET" && req.path === "/api/session") {
+          res.json({
+            session: sessionView(
+              scope.actor,
+              development
+                ? stationFor(scope.actor, DEVELOPMENT_STATIONS)
+                : null,
+              platform ? "platform" : "test",
+            ),
+            testActors: false,
+          });
+          return;
+        }
+        if (
+          scope.actor.kind === "guest" &&
+          !(
+            (req.method === "GET" || req.method === "HEAD") &&
+            (req.path === "/api/items" ||
+              /^\/api\/items\/[^/]+$/.test(req.path) ||
+              req.path.startsWith("/uploads/") ||
+              req.path === "/api/ai/status")
+          )
+        )
+          throw new HttpError(401, "请先使用平台学生身份登录");
+        const runtime = await businessFor(
+          path.join(scope.dataRoot, "shiguang-platform"),
+        );
+        controller.signal.throwIfAborted();
+        platformScope.run(scope, () => runtime.router(req, res, next));
+      } else {
+        const runtime = await businessFor(config.dataDir);
+        runtime.router(req, res, next);
+      }
     } catch (error) {
       next(error);
     }
   });
-  const business = createApp(config, store);
   routes.use(business);
-  routes.use(extras);
   app.use(config.basePath || "/", routes);
   const server = createHttpServer(app);
   let closeFrontend = async () => {};
@@ -131,7 +211,7 @@ try {
     config.production && !process.env.RDFZ_LESSON_ID ? "0.0.0.0" : "127.0.0.1",
     () =>
       console.log(
-        `拾光已启动：http://localhost:${config.port}\n数据目录：${config.dataDir}\nAI：${config.aiKey ? "DeepSeek 已配置" : "未配置，支持手动填写"}\n身份：学校平台登录尚未接入${config.testActors ? "（当前进程打开了测试身份）" : "，写操作需要平台身份"}`,
+        `拾光已启动：http://localhost:${config.port}\n数据目录：${config.dataDir}\nAI：${config.aiKey ? "DeepSeek 已配置" : "未配置，支持手动填写"}\n身份：${platform ? "平台身份" : development ? "本地测试身份（独立测试数据）" : "独立浏览模式"}`,
       ),
   );
   let stopping = false;
@@ -146,11 +226,7 @@ try {
         await closeFrontend();
       } finally {
         await drained;
-        await stopOwnedIntegrations();
-        if (storeReady) {
-          await storeReady.catch(() => {});
-          await store.close();
-        }
+        await closeRuntimes();
       }
       process.exit(0);
     })().catch(() => {
@@ -161,18 +237,12 @@ try {
   server.on("error", async (err) => {
     console.error("启动失败：", err.message);
     await closeFrontend();
-    if (storeReady) {
-      await storeReady.catch(() => {});
-      await store.close();
-    }
+    await closeRuntimes().catch(() => {});
     process.exit(1);
   });
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 } catch (err) {
-  if (storeReady) {
-    await storeReady.catch(() => {});
-    await store.close();
-  }
+  await closeRuntimes();
   throw err;
 }

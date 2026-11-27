@@ -1,9 +1,7 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { DEEPSEEK_MODEL, DEEPSEEK_URL } from "../config.js";
 import type { Config } from "../config.js";
 import type {
-  ReviewCandidate,
   ReviewResult,
   ReviewSubmission,
 } from "../../shared/publication.js";
