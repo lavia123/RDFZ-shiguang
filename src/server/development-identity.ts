@@ -2,9 +2,13 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import express, { type Request } from "express";
 import type { Config } from "./config.js";
-import { HttpError } from "./errors.js";
+import { HttpError, text } from "./errors.js";
 import { platformScope, type PlatformScope } from "./platform-scope.js";
 import type { CurrentActor, LookupResult } from "../shared/identity.js";
+import {
+  findTrialByProfile,
+  loadTestPasswords,
+} from "./test-passwords.js";
 
 export const DEVELOPMENT_STATIONS = [
   {
@@ -199,6 +203,41 @@ export function createDevelopmentIdentity(config: Config) {
         maxAge,
       })
       .json({ ok: true });
+  });
+
+  /** 姓名+班级/处室+密码登录（学生/管理员表单）。 */
+  router.post("/login", async (req, res) => {
+    const name = text(req.body?.name);
+    const className = text(req.body?.className);
+    const password = text(req.body?.password);
+    const kindRaw = text(req.body?.kind);
+    const kind =
+      kindRaw === "admin" ? "admin" : kindRaw === "student" ? "student" : undefined;
+    if (!name || !className || !password)
+      throw new HttpError(400, "请填写姓名、班级或处室、以及密码");
+    const trial = findTrialByProfile(name, className, kind);
+    if (!trial) throw new HttpError(404, "没有这个试用账号，请核对姓名和班级/处室");
+    const passwords = await loadTestPasswords(config.dataDir);
+    if (passwords[trial.key] !== password)
+      throw new HttpError(401, "密码不对");
+    for (const [id, value] of sessions)
+      if (value.expires <= Date.now()) sessions.delete(id);
+    const previous = sessionKey(req);
+    if (previous) sessions.delete(previous);
+    if (sessions.size >= 100)
+      throw new HttpError(429, "测试会话过多，请重启本地服务");
+    const entry = actors.find((actor) => actor.key === trial.key);
+    if (!entry) throw new HttpError(400, "请选择已有的测试身份");
+    const id = randomUUID();
+    sessions.set(id, { key: entry.key, expires: Date.now() + maxAge });
+    res
+      .cookie(cookieName, id, {
+        httpOnly: true,
+        sameSite: "strict",
+        path: "/",
+        maxAge,
+      })
+      .json({ ok: true, notice: "已登录" });
   });
   router.delete("/session", (req, res) => {
     sessions.delete(sessionKey(req) ?? "");

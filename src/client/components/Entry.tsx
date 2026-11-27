@@ -1,44 +1,49 @@
-import { useEffect, useState } from "react";
+import { useState, type FormEvent } from "react";
 import type { SessionView } from "../../shared/identity";
 import { api, message } from "../api";
+import { LOCAL_ADMIN_HINT, LOCAL_TRIAL_HINTS } from "../test-actors";
+
 interface Props {
   open: boolean;
   session: SessionView;
   onClose: () => void;
   onChanged: () => Promise<void>;
 }
+
+type LoginMode = "student" | "admin";
+
 export function LoginRequired({ open, session, onClose, onChanged }: Props) {
-  const [actors, setActors] = useState<{ key: string; label: string }[]>([]);
+  const [mode, setMode] = useState<LoginMode>("student");
+  const [name, setName] = useState("");
+  const [className, setClassName] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [selection, setSelection] = useState("student");
-  const [retry, setRetry] = useState(0);
   const local = session.provenance === "test";
-  useEffect(() => {
-    if (!open) return;
+
+  function switchMode(next: LoginMode) {
+    setMode(next);
+    setName("");
+    setClassName("");
+    setPassword("");
     setError("");
-    if (!local) return;
-    const controller = new AbortController();
-    void api<{ actors: typeof actors }>("/api/development/actors", {
-      signal: controller.signal,
-    })
-      .then((data) => {
-        if (!controller.signal.aborted) setActors(data.actors);
-      })
-      .catch((err) => {
-        if (!controller.signal.aborted) setError(message(err));
-      });
-    return () => controller.abort();
-  }, [open, local, retry]);
-  async function select(key?: string) {
+  }
+
+  async function loginLocal(event: FormEvent) {
+    event.preventDefault();
     if (busy) return;
     setBusy(true);
     setError("");
     try {
-      await api(
-        "/api/development/session",
-        key ? { method: "POST", json: { key } } : { method: "DELETE" },
-      );
+      await api("/api/development/login", {
+        method: "POST",
+        json: {
+          name: name.trim(),
+          className: className.trim(),
+          password,
+          kind: mode,
+        },
+      });
       await onChanged();
     } catch (err) {
       setError(message(err));
@@ -46,21 +51,38 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
       setBusy(false);
     }
   }
-  function login() {
+
+  async function logoutLocal() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api("/api/development/session", { method: "DELETE" });
+      await onChanged();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function loginPlatform() {
     try {
       if (!window.frameElement) throw new Error("请从学校平台课件页面打开");
       window.frameElement.dispatchEvent(
         new CustomEvent("rdfz:lesson-identity"),
       );
       onClose();
-    } catch (error) {
-      setError(message(error));
+    } catch (err) {
+      setError(message(err));
     }
   }
+
   if (!open) return null;
+
   return (
     <div
-      className="login-modal"
+      className="login-modal login-modal-gate"
       id="loginModal"
       role="dialog"
       aria-modal="true"
@@ -68,78 +90,137 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
     >
       <div className="login-card">
         <div className="brand" id="loginTitle">
-          {local ? "开发测试身份" : "请先登录"}
-        </div>
-        <p className="lead">
           {local
-            ? "仅用于本地开发，数据与学校平台分开保存。请选择测试学生或教师。"
-            : "先看也可以。要发布或领取，请使用学校平台身份登录。"}
-        </p>
+            ? mode === "admin"
+              ? "管理员登录"
+              : "登录拾光"
+            : "请先登录"}
+        </div>
+
         {local ? (
-          <div>
-            {!actors.length && !error && <p role="status">正在读取测试身份…</p>}
-            {actors.length > 0 && (
-              <>
-                <label>
-                  测试身份
-                  <select
-                    aria-label="测试身份"
-                    value={selection}
-                    disabled={busy}
-                    onChange={(event) => setSelection(event.target.value)}
-                  >
-                    {actors.map((actor) => (
-                      <option key={actor.key} value={actor.key}>
-                        {actor.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <p>
-                  <button
-                    className="btn btn-primary"
-                    disabled={busy}
-                    onClick={() => void select(selection)}
-                  >
-                    {busy ? "正在进入…" : "使用测试身份进入"}
-                  </button>
-                </p>
-              </>
-            )}
-            {session.kind !== "guest" && (
+          <form className="login-form" onSubmit={(e) => void loginLocal(e)}>
+            <p className="lead">
+              {mode === "admin"
+                ? "请填写管理员姓名、所属处室和密码后进入。"
+                : "请填写姓名、班级和密码后进入。未登录不能使用本站。"}
+            </p>
+            <label>
+              姓名
+              <input
+                id="loginName"
+                value={name}
+                autoComplete="username"
+                onChange={(e) => setName(e.currentTarget.value)}
+                placeholder={
+                  mode === "admin"
+                    ? `例如：${LOCAL_ADMIN_HINT.name}`
+                    : `例如：${LOCAL_TRIAL_HINTS[0].name}`
+                }
+                required
+                autoFocus
+              />
+            </label>
+            <label>
+              {mode === "admin" ? "所属处室" : "班级"}
+              <input
+                id="loginClass"
+                value={className}
+                onChange={(e) => setClassName(e.currentTarget.value)}
+                placeholder={
+                  mode === "admin"
+                    ? `例如：${LOCAL_ADMIN_HINT.className}`
+                    : `例如：${LOCAL_TRIAL_HINTS[0].className}`
+                }
+                required
+              />
+            </label>
+            <label>
+              密码
+              <input
+                id="loginPassword"
+                type="password"
+                value={password}
+                autoComplete="current-password"
+                onChange={(e) => setPassword(e.currentTarget.value)}
+                placeholder="请输入密码"
+                required
+              />
+            </label>
+            {error ? (
+              <p className="login-error" role="alert">
+                {error}
+              </p>
+            ) : null}
+            <button
+              type="submit"
+              className="btn btn-primary"
+              id="btnDoLogin"
+              disabled={busy}
+            >
+              {busy ? "正在登录…" : "登录"}
+            </button>
+            <p className="login-switch">
+              {mode === "student" ? (
+                <button
+                  type="button"
+                  className="btn-text-link"
+                  onClick={() => switchMode("admin")}
+                >
+                  管理员登录
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-text-link"
+                  onClick={() => switchMode("student")}
+                >
+                  返回用户登录
+                </button>
+              )}
+            </p>
+            {session.kind !== "guest" ? (
               <p>
                 <button
+                  type="button"
                   className="btn"
                   disabled={busy}
-                  onClick={() => void select()}
+                  onClick={() => void logoutLocal()}
                 >
                   退出测试身份
                 </button>
               </p>
-            )}
-          </div>
-        ) : session.platformLogin === "ready" ? (
-          <p>
-            <button className="btn btn-primary" onClick={login}>
-              使用学生身份登录
-            </button>
-          </p>
+            ) : null}
+            <p className="hint login-hints">
+              {mode === "admin"
+                ? `试用：${LOCAL_ADMIN_HINT.name} · ${LOCAL_ADMIN_HINT.className} · 默认密码 ${LOCAL_ADMIN_HINT.defaultPassword}`
+                : `试用：${LOCAL_TRIAL_HINTS.map(
+                    (row) =>
+                      `${row.name}/${row.className}（${row.defaultPassword}）`,
+                  ).join("；")}`}
+            </p>
+          </form>
         ) : (
-          <p className="lead">请从学校平台的课件入口打开。</p>
+          <>
+            <p className="lead">
+              {session.platformLogin === "ready"
+                ? "先看也可以。要发布或领取，请使用学校平台身份登录。"
+                : "请从学校平台的课件入口打开。"}
+            </p>
+            {error ? (
+              <p className="login-error" role="alert">
+                {error}
+              </p>
+            ) : null}
+            {session.platformLogin === "ready" ? (
+              <p>
+                <button className="btn btn-primary" onClick={loginPlatform}>
+                  使用学生身份登录
+                </button>
+              </p>
+            ) : null}
+          </>
         )}
-        {error && (
-          <p role="alert">
-            {error}{" "}
-            {local && (
-              <button
-                className="btn"
-                onClick={() => setRetry((value) => value + 1)}
-              >
-                重试读取
-              </button>
-            )}
-          </p>
-        )}
+
         <button
           type="button"
           className="btn"

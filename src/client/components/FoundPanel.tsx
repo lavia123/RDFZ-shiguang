@@ -94,6 +94,8 @@ export function FoundPanel({
               id="fileInput"
               className="file-input-hidden"
               accept="image/*"
+              tabIndex={-1}
+              aria-hidden="true"
               ref={m.fileRef}
               onChange={(e) => {
                 const file = e.currentTarget.files?.[0];

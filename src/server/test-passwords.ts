@@ -1,26 +1,45 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { FIXTURE_ACTORS } from "./auth.js";
 
-/** 本地试用默认密码；修改后写入 data/test-passwords.json。 */
+/**
+ * 本地开发登录密码；键与 development-identity 的 actor.key 对齐。
+ * 管理员可用「学生事务中心」作为处室名登录，映射到 teacher。
+ */
 export const DEFAULT_TEST_PASSWORDS: Record<string, string> = {
-  xiaoli: "456",
-  xiaotang: "123",
+  student: "456",
+  classmate: "123",
+  teacher: "admin",
 };
 
 export type TrialAccount = {
   key: string;
   name: string;
+  /** 登录表单填写的班级/处室，可与 actor.className 不同。 */
   className: string;
+  kind: "student" | "admin";
 };
 
 export function trialAccounts(): TrialAccount[] {
-  return Object.keys(DEFAULT_TEST_PASSWORDS).flatMap((key) => {
-    const actor = FIXTURE_ACTORS[key];
-    if (!actor || actor.kind !== "student" || !actor.name || !actor.className)
-      return [];
-    return [{ key, name: actor.name, className: actor.className }];
-  });
+  return [
+    {
+      key: "student",
+      name: "测试同学",
+      className: "高一1班",
+      kind: "student",
+    },
+    {
+      key: "classmate",
+      name: "同班同学",
+      className: "高一1班",
+      kind: "student",
+    },
+    {
+      key: "teacher",
+      name: "测试老师",
+      className: "学生事务中心",
+      kind: "admin",
+    },
+  ];
 }
 
 function storePath(dataDir: string) {
@@ -59,11 +78,16 @@ export async function saveTestPasswords(
 export function findTrialByProfile(
   name: string,
   className: string,
+  kind?: "student" | "admin",
 ): TrialAccount | null {
   const n = name.trim();
   const c = className.trim();
   return (
-    trialAccounts().find((row) => row.name === n && row.className === c) ||
-    null
+    trialAccounts().find(
+      (row) =>
+        row.name === n &&
+        row.className === c &&
+        (!kind || row.kind === kind),
+    ) || null
   );
 }
