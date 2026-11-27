@@ -55,9 +55,9 @@ export function Header({
           {badge}
         </span>
         {(session.provenance === "test" ||
-          (session.platformLogin === "ready" && session.kind === "guest")) && (
+          session.platformLogin === "ready") && (
           <button type="button" className="ai-config-btn" onClick={onLogin}>
-            {session.provenance === "test" ? "开发测试身份" : "学生登录"}
+            {session.provenance === "test" ? "开发测试身份" : "切换登录身份"}
           </button>
         )}
         {kiosk && (

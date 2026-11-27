@@ -41,6 +41,7 @@ test("Platform identities, class and school storage, image access, and release h
   const id = "l_runtime_test",
     prefix = "/lesson-app/" + id,
     key = randomUUID(),
+    adminPassword = randomUUID(),
     opus = path.join(root, "opus"),
     schools = path.join(root, "schools");
   const student = (
@@ -81,7 +82,7 @@ test("Platform identities, class and school storage, image access, and release h
       classes: [{ id: "class_a1", name: "高一1班" }],
     },
   };
-  async function launch() {
+  async function launch(adminEnabled = true) {
     const port = await unusedPort();
     const child = spawn(
       process.execPath,
@@ -94,13 +95,18 @@ test("Platform identities, class and school storage, image access, and release h
           PORT: String(port),
           RDFZ_LESSON_ID: id,
           RDFZ_APPLICATION_TOKEN: key,
+          ADMIN_PIN: adminEnabled ? adminPassword : "",
           RDFZ_OPUS_ROOT: opus,
           RDFZ_SCHOOL_DATA_ROOT: schools,
         },
-        stdio: ["ignore", "ignore", "ignore", "ipc"],
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
       },
     );
     children.add(child);
+    let diagnostics = "";
+    child.stderr.on("data", (chunk) => {
+      diagnostics = (diagnostics + chunk.toString()).slice(-4000);
+    });
     let lookups = 0;
     child.on("message", (m) => {
       if (m.type === "lesson:student-lookup") {
@@ -142,7 +148,7 @@ test("Platform identities, class and school storage, image access, and release h
         /* The process may still be starting. */
       }
       if (n > 100 || child.exitCode !== null)
-        throw Error("candidate not healthy");
+        throw Error("candidate not healthy: " + diagnostics);
       await new Promise((r) => setTimeout(r, 30));
     }
     return {
@@ -178,7 +184,7 @@ test("Platform identities, class and school storage, image access, and release h
         headers: { "X-Test-Actor": "admin" },
       })
     ).status,
-    200,
+    401,
   );
   assert.equal((await first.request("/api/development/actors")).status, 401);
   assert.equal(
@@ -200,6 +206,69 @@ test("Platform identities, class and school storage, image access, and release h
     ).status,
     401,
   );
+  // An application admin authenticates without becoming a platform student.
+  const guestScope = context(null, ["class_a1"]);
+  const login = (password, trusted = true) =>
+    first.request(
+      "/api/admin/login",
+      guestScope,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password }),
+      },
+      trusted,
+    );
+  assert.equal((await login("wrong")).status, 401);
+  assert.equal((await login(adminPassword, false)).status, 403);
+  const signedIn = await login(adminPassword);
+  assert.equal(signedIn.status, 200);
+  let cookie = signedIn.headers.get("set-cookie").split(";")[0];
+  assert.match(signedIn.headers.get("set-cookie"), /HttpOnly/i);
+  assert.match(signedIn.headers.get("set-cookie"), /Secure/i);
+  const adminRequest = (route, ctx = guestScope, init = {}) =>
+    first.request(route, ctx, {
+      ...init,
+      headers: { ...init.headers, cookie },
+    });
+  for (let refresh = 0; refresh < 2; refresh++) {
+    const view = (await (await adminRequest("/api/session")).json()).session;
+    assert.equal(view.kind, "admin");
+    assert.equal(view.adminSession, true);
+    assert.equal(view.userId, "shiguang_site_admin");
+  }
+  assert.equal((await adminRequest("/api/items")).status, 200);
+  const changedScope = context(null, ["class_a2"]);
+  assert.equal((await adminRequest("/api/items", changedScope)).status, 401);
+  const changedSchool = context(null, ["class_a1"]);
+  changedSchool.dataScope.schoolId = "school_b";
+  changedSchool.dataScope.dataRoot = path.join(
+    schools,
+    "school_b",
+    "lesson-data",
+    id,
+  );
+  assert.equal((await adminRequest("/api/items", changedSchool)).status, 401);
+  assert.equal(
+    (await (await adminRequest("/api/session", context(student()))).json())
+      .session.kind,
+    "student",
+  );
+  cookie = (await login(adminPassword)).headers.get("set-cookie").split(";")[0];
+  assert.equal(
+    (await adminRequest("/api/admin/session", guestScope, { method: "DELETE" }))
+      .status,
+    200,
+  );
+  assert.equal((await adminRequest("/api/items")).status, 401);
+  for (const route of [
+    "/api/items",
+    "/api/items/nonexistent",
+    "/uploads/nonexistent.png",
+    "/api/ai/status",
+    "/api/messages",
+  ])
+    assert.equal((await first.request(route)).status, 401);
   const session = await (
     await first.request("/api/session", context(student()))
   ).json();
@@ -255,7 +324,7 @@ test("Platform identities, class and school storage, image access, and release h
     (await first.request(item.image, context(student()))).status,
     200,
   );
-  assert.equal((await first.request(item.image, context(null))).status, 200);
+  assert.equal((await first.request(item.image, context(null))).status, 401);
   assert.equal(
     (
       await first.request(
@@ -512,4 +581,17 @@ test("Platform identities, class and school storage, image access, and release h
     item.id,
   );
   await candidate.stop();
+  const unconfigured = await launch(false);
+  assert.equal(
+    (
+      await unconfigured.request("/api/admin/login", guestScope, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: "admin" }),
+      })
+    ).status,
+    503,
+  );
+  assert.equal((await unconfigured.request("/api/items")).status, 401);
+  await unconfigured.stop();
 });

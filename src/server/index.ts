@@ -13,10 +13,12 @@ import {
   createDevelopmentIdentity,
   DEVELOPMENT_STATIONS,
 } from "./development-identity.js";
+import { createAdminLogin } from "./admin-login.js";
 import { HttpError } from "./errors.js";
 
 const config = configFromEnv();
 const platform = config.identityMode === "platform";
+const adminLogin = createAdminLogin(config);
 const development =
   config.identityMode === "development"
     ? createDevelopmentIdentity(config)
@@ -59,6 +61,7 @@ async function closeRuntimes() {
 try {
   const app = express();
   const routes = express.Router();
+  routes.use("/api/admin", express.json({ limit: "4kb" }));
   routes.use("/api", (_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -105,30 +108,26 @@ try {
         const scope = platform
           ? readPlatformScope(req, controller.signal)
           : development!.scope(req, controller.signal);
+        if (platform && adminLogin.handle(req, res, scope)) return;
+        const adminSession = platform && adminLogin.apply(req, scope);
         if (req.method === "GET" && req.path === "/api/session") {
           res.json({
-            session: sessionView(
-              scope.actor,
-              development
-                ? stationFor(scope.actor, DEVELOPMENT_STATIONS)
-                : null,
-              platform ? "platform" : "test",
-            ),
+            session: {
+              ...sessionView(
+                scope.actor,
+                development
+                  ? stationFor(scope.actor, DEVELOPMENT_STATIONS)
+                  : null,
+                platform ? "platform" : "test",
+              ),
+              adminSession,
+            },
             testActors: false,
           });
           return;
         }
-        if (
-          scope.actor.kind === "guest" &&
-          !(
-            (req.method === "GET" || req.method === "HEAD") &&
-            (req.path === "/api/items" ||
-              /^\/api\/items\/[^/]+$/.test(req.path) ||
-              req.path.startsWith("/uploads/") ||
-              req.path === "/api/ai/status")
-          )
-        )
-          throw new HttpError(401, "请先使用平台学生身份登录");
+        if (scope.actor.kind === "guest")
+          throw new HttpError(401, "请先登录后使用拾光");
         const runtime = await businessFor(
           path.join(scope.dataRoot, "shiguang-platform"),
         );

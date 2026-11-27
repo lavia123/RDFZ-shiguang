@@ -99,6 +99,7 @@ export function custodyLabel(heldBy: "finder" | "station" | "teacher"): string {
   return "还在捡到的同学手里";
 }
 export interface SessionView {
+  adminSession?: boolean;
   kind: ActorKind;
   userId: string | null;
   name: string;

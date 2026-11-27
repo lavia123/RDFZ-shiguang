@@ -20,6 +20,7 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const local = session.provenance === "test";
+  const adminForm = mode === "admin";
 
   function switchMode(next: LoginMode) {
     setMode(next);
@@ -35,7 +36,7 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
     setBusy(true);
     setError("");
     try {
-      await api("/api/development/login", {
+      await api(local ? "/api/development/login" : "/api/admin/login", {
         method: "POST",
         json:
           mode === "admin"
@@ -60,7 +61,9 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
     setBusy(true);
     setError("");
     try {
-      await api("/api/development/session", { method: "DELETE" });
+      await api(local ? "/api/development/session" : "/api/admin/session", {
+        method: "DELETE",
+      });
       await onChanged();
     } catch (err) {
       setError(message(err));
@@ -69,8 +72,12 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
     }
   }
 
-  function loginPlatform() {
+  async function loginPlatform() {
     try {
+      if (session.adminSession) {
+        await api("/api/admin/session", { method: "DELETE" });
+        await onChanged();
+      }
       if (!window.frameElement) throw new Error("请从学校平台课件页面打开");
       window.frameElement.dispatchEvent(
         new CustomEvent("rdfz:lesson-identity"),
@@ -93,14 +100,14 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
     >
       <div className="login-card">
         <div className="brand" id="loginTitle">
-          {local
+          {local || adminForm
             ? mode === "admin"
               ? "管理员登录"
               : "登录拾光"
             : "请先登录"}
         </div>
 
-        {local ? (
+        {local || adminForm ? (
           <form className="login-form" onSubmit={(e) => void loginLocal(e)}>
             <p className="lead">
               {mode === "admin"
@@ -178,7 +185,7 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
                 </button>
               )}
             </p>
-            {session.kind !== "guest" ? (
+            {(local && session.kind !== "guest") || session.adminSession ? (
               <p>
                 <button
                   type="button"
@@ -186,24 +193,26 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
                   disabled={busy}
                   onClick={() => void logoutLocal()}
                 >
-                  退出测试身份
+                  {local ? "退出测试身份" : "退出管理员登录"}
                 </button>
               </p>
             ) : null}
-            <p className="hint login-hints">
-              {mode === "admin"
-                ? `试用默认密码 ${LOCAL_ADMIN_HINT.defaultPassword}`
-                : `试用：${LOCAL_TRIAL_HINTS.map(
-                    (row) =>
-                      `${row.name}/${row.className}（${row.defaultPassword}）`,
-                  ).join("；")}`}
-            </p>
+            {local && (
+              <p className="hint login-hints">
+                {mode === "admin"
+                  ? `试用默认密码 ${LOCAL_ADMIN_HINT.defaultPassword}`
+                  : `试用：${LOCAL_TRIAL_HINTS.map(
+                      (row) =>
+                        `${row.name}/${row.className}（${row.defaultPassword}）`,
+                    ).join("；")}`}
+              </p>
+            )}
           </form>
         ) : (
           <>
             <p className="lead">
               {session.platformLogin === "ready"
-                ? "先看也可以。要发布或领取，请使用学校平台身份登录。"
+                ? "请使用学生身份或本站管理员身份登录。"
                 : "请从学校平台的课件入口打开。"}
             </p>
             {error ? (
@@ -213,23 +222,47 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
             ) : null}
             {session.platformLogin === "ready" ? (
               <p>
-                <button className="btn btn-primary" onClick={loginPlatform}>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => void loginPlatform()}
+                >
                   使用学生身份登录
                 </button>
               </p>
             ) : null}
+            <p className="login-switch">
+              <button
+                type="button"
+                className="btn-text-link"
+                onClick={() => switchMode("admin")}
+              >
+                管理员登录
+              </button>
+            </p>
+            {session.adminSession && (
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() => void logoutLocal()}
+              >
+                退出管理员登录
+              </button>
+            )}
           </>
         )}
 
-        <button
-          type="button"
-          className="btn"
-          id="btnCloseLogin"
-          disabled={busy}
-          onClick={onClose}
-        >
-          返回浏览
-        </button>
+        {session.kind !== "guest" && (
+          <button
+            type="button"
+            className="btn"
+            id="btnCloseLogin"
+            disabled={busy}
+            onClick={onClose}
+          >
+            返回
+          </button>
+        )}
       </div>
     </div>
   );

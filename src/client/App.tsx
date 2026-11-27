@@ -41,7 +41,8 @@ export default function App() {
   return (
     <>
       <LoginRequired
-        open={needLogin}
+        key={`${session.kind}:${session.userId}`}
+        open={session.kind === "guest" || needLogin}
         session={session}
         onClose={() => setNeedLogin(false)}
         onChanged={async () => {
@@ -49,11 +50,13 @@ export default function App() {
           await reload();
         }}
       />
-      <Workspace
-        key={`${session.provenance}:${session.kind}:${session.userId}:${session.className}`}
-        session={session}
-        onLogin={() => setNeedLogin(true)}
-      />
+      {session.kind !== "guest" && (
+        <Workspace
+          key={`${session.provenance}:${session.kind}:${session.userId}:${session.className}`}
+          session={session}
+          onLogin={() => setNeedLogin(true)}
+        />
+      )}
     </>
   );
 }
@@ -218,9 +221,7 @@ function Workspace({
       });
       if (data.batch?.status === "failed") {
         notify(
-          data.batch.error
-            ? `配对未完成：${data.batch.error}`
-            : "配对未完成",
+          data.batch.error ? `配对未完成：${data.batch.error}` : "配对未完成",
         );
       } else {
         notify(data.notice || "已手动开启 AI 配对");

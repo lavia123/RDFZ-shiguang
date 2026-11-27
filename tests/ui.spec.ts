@@ -39,18 +39,17 @@ async function openAs(page: import("@playwright/test").Page, actor = "") {
   await page.goto("/");
   await expect(page.locator("#roleBadge")).toBeVisible();
 }
-test("guest can browse and explicitly enter local development identities", async ({
+test("requires login before browsing and keeps the administrator form", async ({
   page,
 }) => {
-  await openAs(page);
-  await expect(page.locator("#panel-browse")).toBeVisible();
-  await expect(page.locator("#roleBadge")).toHaveText("游客");
-  await expect(page.locator("#roleUser")).toHaveCount(0);
-  await page.locator('[data-panel="found"]').click();
+  await page.goto("/");
   await expect(page.locator("#loginModal")).toBeVisible();
-  await expect(page.locator("#loginTitle")).toContainText("开发测试身份");
-  await page.locator("#btnCloseLogin").click();
-  await expect(page.locator("#panel-browse")).toBeVisible();
+  await expect(page.locator("#panel-browse")).toHaveCount(0);
+  await expect(page.locator("#btnCloseLogin")).toHaveCount(0);
+  await page.getByRole("button", { name: "管理员登录", exact: true }).click();
+  await expect(page.locator("#loginTitle")).toHaveText("管理员登录");
+  await expect(page.locator("#loginName")).toHaveCount(0);
+  await expect(page.locator("#loginPassword")).toBeVisible();
 });
 test("publishes, edits, filters and deletes using the signed-in student flow", async ({
   page,
@@ -132,16 +131,14 @@ test("extracts form text locally and handles camera permission failure", async (
     "无法打开摄像头，请改用相册上传",
   );
 });
-test("keeps mobile browsing usable without the old role gate", async ({
-  page,
-}) => {
+test("keeps mobile browsing usable after login", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await openAs(page);
+  await openAs(page, "student");
   await expect(page.locator("#panel-browse")).toBeVisible();
   await page.locator("#backGate").click();
   await expect(page.locator("#panel-browse")).toBeVisible();
   await page.locator('[data-panel="found"]').click();
-  await expect(page.locator("#loginModal")).toBeVisible();
+  await expect(page.locator("#panel-found")).toBeVisible();
 });
 test("student registers an ordinary claim and admin records the real claimant", async ({
   page,
@@ -172,9 +169,8 @@ test("student registers an ordinary claim and admin records the real claimant", 
   await claimant.close();
   const guest = await browser.newPage({ baseURL: localOrigin });
   await guest.goto("/");
-  await guest.locator(".item-card").filter({ hasText: "管理测试物品" }).click();
-  await expect(guest.locator("#claimHiddenNote")).toBeVisible();
-  await expect(guest.locator("#detailClaimInfo")).toHaveCount(0);
+  await expect(guest.locator("#loginModal")).toBeVisible();
+  await expect(guest.locator(".item-card")).toHaveCount(0);
   await guest.close();
   page.on("dialog", (dialog) => dialog.accept());
   await openAs(page, "admin");
@@ -262,4 +258,78 @@ test("development server never serves private state or server source", async ({
     const response = await request.get(url);
     expect(response.status()).toBe(404);
   }
+});
+
+// The iframe harness models the same-origin host identity event; real server
+// credentials and scope isolation are covered by test:lesson.
+test("platform gate offers student bridge and independent admin login, refresh and logout", async ({
+  page,
+}) => {
+  let signedIn = false;
+  await page.route("**/platform-harness", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<iframe src="/" style="width:100%;height:900px" onload="this.addEventListener(\'rdfz:lesson-identity\',()=>document.body.dataset.studentLogin=\'requested\')"></iframe>',
+    }),
+  );
+  await page.route("**/api/session", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          kind: signedIn ? "admin" : "guest",
+          userId: signedIn ? "site_admin" : null,
+          name: signedIn ? "站点管理员" : "",
+          className: "",
+          provenance: "platform",
+          platformLogin: "ready",
+          adminSession: signedIn,
+          capabilities: {
+            browse: signedIn,
+            administer: signedIn,
+            publishFound: signedIn,
+            claimSelf: false,
+            readMessages: signedIn,
+          },
+        },
+      },
+    }),
+  );
+  await page.route("**/api/admin/login", async (route) => {
+    signedIn =
+      route.request().postDataJSON().password === "browser-test-password";
+    await route.fulfill({
+      status: signedIn ? 200 : 401,
+      json: signedIn ? { ok: true } : { error: "管理员密码错误" },
+    });
+  });
+  await page.route("**/api/admin/session", async (route) => {
+    signedIn = false;
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.route("**/api/items", (route) =>
+    route.fulfill({ json: { items: [] } }),
+  );
+  await page.goto("/platform-harness");
+  const app = page.frameLocator("iframe");
+  await expect(app.locator("#loginModal")).toBeVisible();
+  await expect(app.locator("#panel-browse")).toHaveCount(0);
+  await app.getByRole("button", { name: "使用学生身份登录" }).click();
+  await expect(page.locator("body")).toHaveAttribute(
+    "data-student-login",
+    "requested",
+  );
+  await expect(app.locator("#loginModal")).toBeVisible();
+  await app.getByRole("button", { name: "管理员登录", exact: true }).click();
+  await app.locator("#loginPassword").fill("incorrect");
+  await app.locator("#btnDoLogin").click();
+  await expect(app.getByRole("alert")).toHaveText("管理员密码错误");
+  await app.locator("#loginPassword").fill("browser-test-password");
+  await app.locator("#btnDoLogin").click();
+  await expect(app.locator("#roleBadge")).toContainText("站点管理员");
+  await page.reload();
+  await expect(app.locator("#roleBadge")).toContainText("站点管理员");
+  await app.getByRole("button", { name: "切换登录身份" }).click();
+  await app.getByRole("button", { name: "退出管理员登录" }).click();
+  await expect(app.locator("#loginModal")).toBeVisible();
+  await expect(app.locator("#panel-browse")).toHaveCount(0);
 });

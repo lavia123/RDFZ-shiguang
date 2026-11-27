@@ -6,7 +6,7 @@ export interface Config {
   basePath?: string;
   dataDir: string;
   port: number;
-  /** 不再用于授权。保留字段以免旧环境文件导致启动失败。 */
+  /** 平台运行时本站管理员的密码；未设置时拒绝密码登录。 */
   adminPin: string;
   tokenSecret: string;
   aiKey: string;

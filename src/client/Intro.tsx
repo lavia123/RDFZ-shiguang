@@ -94,7 +94,7 @@ export default function Intro() {
             管理员和公共终端由学校平台授权。管理员核对高价值物品后交付，公共终端只负责拍照发布。
           </p>
           <div className="chip-row">
-            <span className="chip">游客可浏览</span>
+            <span className="chip">登录后使用</span>
             <span className="chip">发布和领取走平台身份</span>
             <span className="chip">同校 / 同局域网可共享</span>
           </div>
@@ -108,7 +108,7 @@ export default function Intro() {
           <div className="idea">
             <strong>低门槛发布</strong>
             <span>
-              游客可以浏览公开招领。发布和领取使用学校平台的姓名与班级，不在这里注册，也不用填写手机号。
+              学生或管理员登录后才能浏览招领。发布和领取使用学校平台的姓名与班级，不在这里注册，也不用填写手机号。
             </span>
           </div>
           <div className="idea">
