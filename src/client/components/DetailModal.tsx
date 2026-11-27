@@ -69,12 +69,7 @@ export function DetailModal({
     }
   }
   function selfClaim() {
-    if (
-      !confirm(
-        "确认东西已经给你了？这只是你自己登记，老师还没核对。",
-      )
-    )
-      return;
+    if (!confirm("确认已拿到物品？")) return;
     void run("claim");
   }
   function deliver() {
@@ -110,7 +105,6 @@ export function DetailModal({
           <DetailRow label="在哪捡到的" value={item.place || "没写"} />
           <DetailRow label="发布时间" value={formatTime(item.createdAt)} />
           <DetailRow label="领取地点" value={item.office || "逸夫楼316"} />
-          <DetailRow label="现在在哪" value={item.custody.label} />
           {item.contactVisible && (item.contact || item.contactValue) && (
             <div id="sensitiveBlock">
               {item.contact && (
@@ -172,17 +166,6 @@ export function DetailModal({
         </div>
         </div>
         <div className="claim-dock" id="claimConditions">
-          <p className="claim-hint" id="claimHint">
-            {session.kind === "kiosk"
-              ? "这台电脑只能发布，不能在这里领取。"
-              : !open
-                ? "先看上面的照片和说明。"
-                : item.highValue
-                  ? "这是贵重物品。你只能说「这是我的」，老师核对后才会给你。"
-                  : session.kind === "guest"
-                    ? "看完上面的照片和说明，登录后才能登记领取。"
-                    : "如果东西已经给你了，点下面按钮自己登记。这还不是老师核对过。"}
-          </p>
           {item.highValue && open && (
             <div className="locked-note" id="highValueNote">
               {item.custody.teacherReceived

@@ -145,7 +145,7 @@ export function FoundPanel({
               disabled={m.fillBusy}
               onClick={() => void m.extract()}
             >
-              {m.fillBusy ? "正在填写…" : "填上捡到地点"}
+              {m.fillBusy ? "正在填写…" : "提取关键信息"}
             </button>
           </div>
           {m.reviewIssues.length > 0 && (
