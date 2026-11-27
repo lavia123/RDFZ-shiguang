@@ -1,7 +1,11 @@
-/** B 站内候选消息：同一对寻物+招领一条可持续更新的记录。 */
+/** 站内消息：配对提醒、冒领申诉、高价值提示等。 */
+
+export type InboxKind = "match" | "claim_dispute" | "high_value_alert";
 
 export interface MatchMessage {
   id: string;
+  /** 缺省视为配对消息，兼容旧数据。 */
+  kind?: InboxKind;
   lostPostId: string;
   itemId: string;
   recipientUserId: string;
@@ -10,6 +14,13 @@ export interface MatchMessage {
   itemRevision: number;
   batchId: string;
   reason: string;
+  /** 展示标题（申诉/高价值等）。 */
+  title?: string;
+  /** 学生选择的联系选项，如「我的东西被冒领了？」。 */
+  option?: string;
+  fromUserId?: string;
+  fromName?: string;
+  fromClassName?: string;
   read: boolean;
   /** 用户标记「不是我的」后，相同版本不再提醒。 */
   dismissed: boolean;
@@ -26,4 +37,7 @@ export interface MatchMessageView extends MatchMessage {
   itemImage?: string;
   itemPlace?: string;
   itemOffice?: string;
+  itemStatus?: string;
 }
+
+export const CLAIM_DISPUTE_OPTION = "我的东西被冒领了？";

@@ -121,6 +121,13 @@ const actors = [
   actor: CurrentActor;
 }[];
 
+/** 本地开发身份里的管理员 userId，供站内信收件。 */
+export function developmentAdminUserIds(): string[] {
+  return actors
+    .filter((entry) => entry.actor.kind === "admin" && entry.actor.userId)
+    .map((entry) => entry.actor.userId!);
+}
+
 export function lookupDevelopmentStudent(userId: string): LookupResult {
   const scope = platformScope.getStore();
   if (scope?.actor.kind !== "admin") throw new HttpError(403, "需要教师身份");

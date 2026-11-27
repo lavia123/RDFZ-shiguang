@@ -39,6 +39,12 @@ export function messagesRouter(deps: {
 
   async function inScope(msg: Awaited<ReturnType<MessageStore["read"]>>) {
     if (!msg) return false;
+    const kind = msg.kind || "match";
+    if (kind !== "match") {
+      if (!msg.itemId) return true;
+      const found = await deps.store.read(msg.itemId);
+      return !!found;
+    }
     if (!platformScope.getStore()) return true;
     // Match explanations can contain content from both referenced records.
     const [lost, found] = await Promise.all([
@@ -51,8 +57,22 @@ export function messagesRouter(deps: {
   async function decorate(
     msg: Awaited<ReturnType<MessageStore["read"]>> & object,
   ): Promise<MatchMessageView> {
+    const kind = msg.kind || "match";
+    const record = msg.itemId ? await deps.store.read(msg.itemId) : null;
+    if (kind !== "match") {
+      return {
+        ...msg,
+        kind,
+        stale: false,
+        staleReason: "",
+        itemDescription: record?.item.description,
+        itemImage: record?.item.image,
+        itemPlace: record?.item.place,
+        itemOffice: record?.item.office,
+        itemStatus: record?.item.status,
+      };
+    }
     const lost = await deps.lost.read(msg.lostPostId);
-    const record = await deps.store.read(msg.itemId);
     let stale = false;
     let staleReason = "";
     if (!lost || lost.status !== "open") {
@@ -73,6 +93,7 @@ export function messagesRouter(deps: {
     }
     return {
       ...msg,
+      kind,
       stale,
       staleReason,
       lostDescription: lost?.description,
@@ -80,6 +101,7 @@ export function messagesRouter(deps: {
       itemImage: record?.item.image,
       itemPlace: record?.item.place,
       itemOffice: record?.item.office,
+      itemStatus: record?.item.status,
     };
   }
 

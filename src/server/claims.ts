@@ -1,4 +1,5 @@
 import type { Express, Request } from "express";
+import type { Config } from "./config.js";
 import type { FileStore } from "./storage.js";
 import { HttpError, text } from "./errors.js";
 import { publicItem } from "./items.js";
@@ -14,7 +15,10 @@ import {
   type LookupResult,
 } from "../shared/identity.js";
 import type { DeliveryRecord, ItemRecord } from "../shared/types.js";
+import { CLAIM_DISPUTE_OPTION } from "../shared/messages.js";
+import { notifyAdminsClaimDispute } from "./inbox.js";
 export interface ClaimContext {
+  config: Config;
   store: FileStore;
   actorOf: (req: Request) => Promise<CurrentActor>;
   lookup: (userId: string) => Promise<LookupResult>;
@@ -255,13 +259,42 @@ export function registerClaimRoutes(app: Express, ctx: ClaimContext) {
   app.post("/api/items/:id/high-value", async (req, res) => {
     const actor = await ctx.actorOf(req);
     if (actor.kind !== "admin") throw new HttpError(403, "只有老师可以操作");
-    if (req.body?.highValue === false || req.body?.highValue === "false")
-      throw new HttpError(403, "不能在这里取消贵重标记");
+    const turnOff =
+      req.body?.highValue === false || req.body?.highValue === "false";
     const record = await ctx.store.mutate(text(req.params.id), (current) => {
       const next = requireRecord(current);
-      next.item.high_value = true;
+      next.item.high_value = !turnOff;
       return next;
     });
     res.json({ item: publicItem(record as ItemRecord, actor) });
+  });
+
+  /** 学生：物品已领取后联系管理员（冒领申诉）。 */
+  app.post("/api/items/:id/contact-admin", async (req, res) => {
+    const actor = await ctx.actorOf(req);
+    if (actor.kind !== "student" || !actor.userId)
+      throw new HttpError(403, "需要学生登录后才能联系管理员");
+    const option = text(req.body?.option) || CLAIM_DISPUTE_OPTION;
+    if (option !== CLAIM_DISPUTE_OPTION)
+      throw new HttpError(400, "请选择有效的联系选项");
+    const current = await ctx.store.read(text(req.params.id));
+    if (!current) throw new HttpError(404, "帖子不存在");
+    const row = normalizeRecord(current).item;
+    if (row.status !== "claimed")
+      throw new HttpError(400, "只有已领取的物品可以联系管理员反馈冒领");
+    const count = await notifyAdminsClaimDispute(
+      ctx.config.dataDir,
+      ctx.config,
+      {
+        itemId: row.id,
+        itemDescription: row.description,
+        fromUserId: actor.userId,
+        fromName: text(actor.name) || "同学",
+        fromClassName: text(actor.className),
+      },
+    );
+    if (!count)
+      throw new HttpError(503, "暂时没有可联系的管理员，请稍后再试");
+    res.json({ ok: true, notice: "已发给管理员，请等待处理" });
   });
 }

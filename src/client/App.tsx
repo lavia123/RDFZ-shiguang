@@ -79,6 +79,7 @@ function Workspace({
   const [to, setTo] = useState("");
   const [idleLeft, setIdleLeft] = useState(KIOSK_IDLE_MS);
   const [toast, setToast] = useState({ message: "", id: 0 });
+  const [matchingBusy, setMatchingBusy] = useState(false);
   const refreshGeneration = useRef(0);
   const actions = useRef(new Set<string>());
   const notify = useCallback(
@@ -184,20 +185,50 @@ function Workspace({
       actions.current.delete(item.id);
     }
   }
-  async function markHighValue(item: Item) {
+  async function markHighValue(item: Item, highValue: boolean) {
     if (actions.current.has(item.id)) return;
     actions.current.add(item.id);
     try {
       await api(`/api/items/${item.id}/high-value`, {
         method: "POST",
-        json: { highValue: true },
+        json: { highValue },
       });
       await refresh();
-      notify("已标为高价值。学生不能自行取消，也不能自行确认领走。");
+      notify(
+        highValue
+          ? "已标为高价值。学生不能自行确认领走。"
+          : "已撤销高价值标记。",
+      );
     } catch (err) {
       notify(message(err));
     } finally {
       actions.current.delete(item.id);
+    }
+  }
+  async function runMatching() {
+    if (matchingBusy) return;
+    setMatchingBusy(true);
+    try {
+      const data = await api<{
+        notice?: string;
+        batch?: { status?: string; error?: string | null };
+      }>("/api/matching/run", {
+        method: "POST",
+        json: {},
+      });
+      if (data.batch?.status === "failed") {
+        notify(
+          data.batch.error
+            ? `配对未完成：${data.batch.error}`
+            : "配对未完成",
+        );
+      } else {
+        notify(data.notice || "已手动开启 AI 配对");
+      }
+    } catch (err) {
+      notify(message(err));
+    } finally {
+      setMatchingBusy(false);
     }
   }
   async function detailAction(action: DetailAction, body?: unknown) {
@@ -297,15 +328,42 @@ function Workspace({
             }}
             onDelete={(item) => void remove(item)}
           />
-          <LostPanel active={panel === "lost"} notify={notify} />
-          <MessagesPanel active={panel === "messages"} notify={notify} />
+          {session.kind === "student" && (
+            <LostPanel
+              active={panel === "lost"}
+              notify={notify}
+              aiConfigured={ai.configured}
+            />
+          )}
+          {session.capabilities.readMessages && (
+            <MessagesPanel
+              active={panel === "messages"}
+              notify={notify}
+              isAdmin={session.kind === "admin"}
+              onOpenItem={(itemId) => {
+                setPanel("browse");
+                void (async () => {
+                  try {
+                    await refresh();
+                  } catch (err) {
+                    notify("刷新列表失败：" + message(err));
+                  }
+                  setDetail(itemId);
+                })();
+              }}
+            />
+          )}
           {session.kind === "admin" && (
             <AdminPanel
               active={panel === "admin"}
               items={items}
+              matchingBusy={matchingBusy}
               onOpen={setDetail}
               onDelete={(item) => void remove(item)}
-              onMarkHighValue={(item) => void markHighValue(item)}
+              onMarkHighValue={(item, highValue) =>
+                void markHighValue(item, highValue)
+              }
+              onRunMatching={() => void runMatching()}
             />
           )}
         </main>

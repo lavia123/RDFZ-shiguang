@@ -9,6 +9,7 @@ import type { ReviewIssue } from "../../shared/identity";
 interface Props {
   active: boolean;
   notify: (msg: string) => void;
+  aiConfigured?: boolean;
 }
 
 function statusLabel(post: LostPost) {
@@ -38,7 +39,7 @@ export function isTooSimpleDescription(raw: string): boolean {
   return false;
 }
 
-export function LostPanel({ active, notify }: Props) {
+export function LostPanel({ active, notify, aiConfigured }: Props) {
   const [posts, setPosts] = useState<LostPost[]>([]);
   const [description, setDescription] = useState("");
   const [place, setPlace] = useState("");
@@ -47,6 +48,7 @@ export function LostPanel({ active, notify }: Props) {
   const [busy, setBusy] = useState(false);
   const [listTab, setListTab] = useState<"active" | "history">("active");
   const [simpleWarned, setSimpleWarned] = useState(false);
+  const [simplifyBusy, setSimplifyBusy] = useState(false);
   const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
   const [recoverTarget, setRecoverTarget] = useState<LostPost | null>(null);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
@@ -174,26 +176,66 @@ export function LostPanel({ active, notify }: Props) {
               type="button"
               className="btn btn-ghost btn-text-extract"
               id="btnSimplify"
+              disabled={simplifyBusy}
               onClick={() => {
-                const next = simplifyDescription(description);
-                if (!description.trim()) {
-                  notify("先写一段描述，再点精简");
-                  return;
-                }
-                if (next === description.trim()) {
-                  notify("已经比较简短了");
-                  return;
-                }
-                setDescription(next);
-                setSimpleWarned(false);
-                notify("已去掉多余的话，你还可以再改");
+                void (async () => {
+                  const raw = description.trim();
+                  if (!raw) {
+                    notify("先写一段描述，再点精简");
+                    return;
+                  }
+                  if (simplifyBusy) return;
+                  setSimplifyBusy(true);
+                  try {
+                    let next = raw;
+                    if (aiConfigured) {
+                      const data = await api<{ text: string }>(
+                        "/api/ai/simplify",
+                        {
+                          method: "POST",
+                          json: { text: raw },
+                        },
+                      );
+                      next = (data.text || "").trim() || raw;
+                      notify("已用 AI 精简，只保留失物相关信息");
+                    } else {
+                      next = simplifyDescription(raw);
+                      if (next === raw) {
+                        notify("已经比较简短了");
+                        return;
+                      }
+                      notify(
+                        "已去掉多余的话（本地规则）；连上 AI 后会改由 AI 精简",
+                      );
+                    }
+                    setDescription(next);
+                    setSimpleWarned(false);
+                  } catch (err) {
+                    const fallback = simplifyDescription(raw);
+                    if (fallback && fallback !== raw) {
+                      setDescription(fallback);
+                      setSimpleWarned(false);
+                      notify(
+                        "AI 精简失败，已用本地规则处理：" +
+                          message(err).slice(0, 40),
+                      );
+                    } else {
+                      notify(message(err));
+                    }
+                  } finally {
+                    setSimplifyBusy(false);
+                  }
+                })();
               }}
             >
-              精简一下
+              {simplifyBusy ? "精简中…" : "精简一下"}
             </button>
           </div>
           <span className="hint">
-            写下颜色、样子、在哪丢的。问候和「谢谢」可以留给按钮删掉。
+            写下颜色、样子等特征。「精简一下」
+            {aiConfigured
+              ? "会用 AI 去掉无关信息，只留失物本身。"
+              : "在未配置 AI 时用本地规则去掉无关话；连上 AI 后会改由 AI 精简。"}
           </span>
           <textarea
             id="lostDescription"

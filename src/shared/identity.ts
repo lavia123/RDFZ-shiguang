@@ -149,7 +149,7 @@ export function sessionView(
       publishFound: kind === "student" || kind === "kiosk" || kind === "admin",
       claimSelf: kind === "student",
       administer: kind === "admin",
-      readMessages: kind === "student",
+      readMessages: kind === "student" || kind === "admin",
     },
   };
 }

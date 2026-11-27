@@ -28,8 +28,12 @@ export class MessageStore {
       throw err;
     }
     const parsed = JSON.parse(raw) as MatchMessage;
-    if (!parsed || parsed.id !== id || !parsed.lostPostId)
+    if (!parsed || parsed.id !== id)
       throw new Error(`消息 ${id} 数据损坏`);
+    const kind = parsed.kind || "match";
+    if (kind === "match" && !parsed.lostPostId)
+      throw new Error(`消息 ${id} 数据损坏`);
+    if (!parsed.kind) parsed.kind = kind;
     return parsed;
   }
 
@@ -54,7 +58,10 @@ export class MessageStore {
   async findPair(lostPostId: string, itemId: string) {
     return (
       (await this.list()).find(
-        (m) => m.lostPostId === lostPostId && m.itemId === itemId,
+        (m) =>
+          (m.kind || "match") === "match" &&
+          m.lostPostId === lostPostId &&
+          m.itemId === itemId,
       ) || null
     );
   }

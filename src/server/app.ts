@@ -154,7 +154,7 @@ export function createApp(
     review,
     stations,
   });
-  registerClaimRoutes(app, { store, actorOf, lookup, stationUserIds });
+  registerClaimRoutes(app, { config, store, actorOf, lookup, stationUserIds });
   app.delete("/api/items/:id", async (req, res) => {
     const actor = await actorOf(req);
     if (actor.kind === "guest" || !actor.userId)

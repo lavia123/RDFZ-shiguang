@@ -65,6 +65,23 @@ export function aiRouter(config: Config, request: typeof fetch = fetch) {
         .filter(Boolean)[0],
     });
   });
+  router.post("/simplify", async (req, res) => {
+    const source = text(req.body?.text);
+    if (!source) throw new HttpError(400, "缺少要精简的文字");
+    if (source.length > 4000) throw new HttpError(400, "文字过长");
+    const prompt =
+      "你是校园失物招领助手。把用户写的寻物描述精简为只保留与失物本身有关的信息：" +
+      "颜色、款式、材质、标识文字/编号、破损或特征等。删除问候、语气词、时间地点叙事、求扩散、谢谢、在线等无关内容。" +
+      "只输出精简后的一句中文，不要引号，不要解释。\n原文：" +
+      source;
+    const result = await completion([{ role: "user", content: prompt }], 200);
+    res.json({
+      text: result
+        .replace(/^["'“‘]|["'”’]$/g, "")
+        .split("\n")
+        .filter(Boolean)[0],
+    });
+  });
   router.post("/extract", async (req, res) => {
     const transcript = text(req.body?.transcript);
     if (!transcript) throw new HttpError(400, "缺少口述文字");

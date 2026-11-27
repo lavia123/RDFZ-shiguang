@@ -4,7 +4,8 @@ import type { Item } from "../../shared/types";
 import type { SessionView } from "../../shared/identity";
 import { formatTime, formatContactWay } from "../utils";
 import { StatusBadge, ViewLogs } from "./ItemCards";
-import { message } from "../api";
+import { api, message } from "../api";
+import { CLAIM_DISPUTE_OPTION } from "../../shared/messages";
 export type DetailAction =
   | "claim"
   | "intent"
@@ -225,6 +226,44 @@ export function DetailModal({
                 onClick={() => void run("intent")}
               >
                 {item.myIntent ? "已经说过这是我的" : "这是我的"}
+              </button>
+            )}
+            {student && item.status === "claimed" && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                id="btnContactAdmin"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    !confirm(
+                      `联系管理员并发送「${CLAIM_DISPUTE_OPTION}」？`,
+                    )
+                  )
+                    return;
+                  void (async () => {
+                    if (working.current) return;
+                    working.current = true;
+                    setBusy(true);
+                    try {
+                      const data = await api<{ notice?: string }>(
+                        `/api/items/${encodeURIComponent(item.id)}/contact-admin`,
+                        {
+                          method: "POST",
+                          json: { option: CLAIM_DISPUTE_OPTION },
+                        },
+                      );
+                      notify(data.notice || "已发给管理员");
+                    } catch (err) {
+                      notify(message(err));
+                    } finally {
+                      working.current = false;
+                      setBusy(false);
+                    }
+                  })();
+                }}
+              >
+                联系管理员
               </button>
             )}
             {admin && open && !item.custody.teacherReceived && (

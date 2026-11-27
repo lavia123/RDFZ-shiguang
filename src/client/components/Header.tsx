@@ -127,7 +127,7 @@ export function Header({
               发寻物
             </button>
           )}
-          {student && (
+          {(student || admin) && (
             <button
               type="button"
               data-panel="messages"

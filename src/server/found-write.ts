@@ -17,6 +17,7 @@ import {
 import type { ItemRecord, ItemRow } from "../shared/types.js";
 import { FIXED_OFFICE } from "../shared/constants.js";
 import { formatReviewIssue } from "../shared/review-labels.js";
+import { maybeAlertHighValue } from "./inbox.js";
 export interface FoundWriteContext {
   config: Config;
   store: FileStore;
@@ -166,6 +167,10 @@ export function registerFoundRoutes(app: Express, ctx: FoundWriteContext) {
         return { item: row, viewLogs: [] };
       });
       saved = true;
+      void maybeAlertHighValue(ctx.config.dataDir, ctx.config, {
+        id,
+        description,
+      }).catch(() => {});
       res.status(201).json({ item: publicItem(record as ItemRecord, actor) });
     } finally {
       await cleanupUpload(req.file);

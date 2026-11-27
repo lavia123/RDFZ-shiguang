@@ -131,28 +131,46 @@ export function HistoryPanel({ active, items, onEdit, onDelete }: HistoryProps) 
 interface AdminProps {
   active: boolean;
   items: Item[];
+  matchingBusy?: boolean;
   onOpen: (id: string) => void;
   onDelete: (item: Item) => void;
-  onMarkHighValue: (item: Item) => void;
+  onMarkHighValue: (item: Item, highValue: boolean) => void;
+  onRunMatching?: () => void;
 }
 export function AdminPanel({
   active,
   items,
+  matchingBusy,
   onOpen,
   onDelete,
   onMarkHighValue,
+  onRunMatching,
 }: AdminProps) {
   return (
     <section className={"panel" + (active ? " active" : "")} id="panel-admin">
       <div className="panel-head">
         <h1>交给谁了</h1>
-        <p>在这里登记交给了哪位同学。要填同学的账号，不能写成老师自己领走。</p>
+        <p>
+          在这里登记交给了哪位同学。要填同学的账号，不能写成老师自己领走。寻物配对默认每天北京时间
+          14:00，也可手动开启 AI 配对。
+        </p>
       </div>
       <div className="toolbar">
         <span className="count" id="adminCount">
           共 {items.length} 条 · 高价值 {items.filter((item) => item.highValue).length} ·
           已领取 {items.filter((item) => item.status === "claimed").length}
         </span>
+        {onRunMatching ? (
+          <button
+            type="button"
+            className="btn btn-primary"
+            id="btnRunMatching"
+            disabled={!!matchingBusy}
+            onClick={onRunMatching}
+          >
+            {matchingBusy ? "配对进行中…" : "手动开启 AI 配对"}
+          </button>
+        ) : null}
       </div>
       <div className="history-list" id="adminList">
         {items.map((item) => (
@@ -187,15 +205,13 @@ export function AdminPanel({
               )}
             </div>
             <div className="history-actions">
-              {!item.highValue && (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-mark-high"
-                  onClick={() => onMarkHighValue(item)}
-                >
-                  标为高价值
-                </button>
-              )}
+              <button
+                type="button"
+                className="btn btn-ghost btn-mark-high"
+                onClick={() => onMarkHighValue(item, !item.highValue)}
+              >
+                {item.highValue ? "撤销高价值" : "标为高价值"}
+              </button>
               <button
                 type="button"
                 className="btn btn-primary btn-view"
