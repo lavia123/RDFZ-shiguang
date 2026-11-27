@@ -37,12 +37,15 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
     try {
       await api("/api/development/login", {
         method: "POST",
-        json: {
-          name: name.trim(),
-          className: className.trim(),
-          password,
-          kind: mode,
-        },
+        json:
+          mode === "admin"
+            ? { password, kind: "admin" }
+            : {
+                name: name.trim(),
+                className: className.trim(),
+                password,
+                kind: "student",
+              },
       });
       await onChanged();
     } catch (err) {
@@ -101,39 +104,35 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
           <form className="login-form" onSubmit={(e) => void loginLocal(e)}>
             <p className="lead">
               {mode === "admin"
-                ? "请填写管理员姓名、所属处室和密码后进入。"
+                ? "请填写管理员密码后进入。"
                 : "请填写姓名、班级和密码后进入。未登录不能使用本站。"}
             </p>
-            <label>
-              姓名
-              <input
-                id="loginName"
-                value={name}
-                autoComplete="username"
-                onChange={(e) => setName(e.currentTarget.value)}
-                placeholder={
-                  mode === "admin"
-                    ? `例如：${LOCAL_ADMIN_HINT.name}`
-                    : `例如：${LOCAL_TRIAL_HINTS[0].name}`
-                }
-                required
-                autoFocus
-              />
-            </label>
-            <label>
-              {mode === "admin" ? "所属处室" : "班级"}
-              <input
-                id="loginClass"
-                value={className}
-                onChange={(e) => setClassName(e.currentTarget.value)}
-                placeholder={
-                  mode === "admin"
-                    ? `例如：${LOCAL_ADMIN_HINT.className}`
-                    : `例如：${LOCAL_TRIAL_HINTS[0].className}`
-                }
-                required
-              />
-            </label>
+            {mode === "student" ? (
+              <>
+                <label>
+                  姓名
+                  <input
+                    id="loginName"
+                    value={name}
+                    autoComplete="username"
+                    onChange={(e) => setName(e.currentTarget.value)}
+                    placeholder={`例如：${LOCAL_TRIAL_HINTS[0].name}`}
+                    required
+                    autoFocus
+                  />
+                </label>
+                <label>
+                  班级
+                  <input
+                    id="loginClass"
+                    value={className}
+                    onChange={(e) => setClassName(e.currentTarget.value)}
+                    placeholder={`例如：${LOCAL_TRIAL_HINTS[0].className}`}
+                    required
+                  />
+                </label>
+              </>
+            ) : null}
             <label>
               密码
               <input
@@ -144,6 +143,7 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
                 onChange={(e) => setPassword(e.currentTarget.value)}
                 placeholder="请输入密码"
                 required
+                autoFocus={mode === "admin"}
               />
             </label>
             {error ? (
@@ -192,7 +192,7 @@ export function LoginRequired({ open, session, onClose, onChanged }: Props) {
             ) : null}
             <p className="hint login-hints">
               {mode === "admin"
-                ? `试用：${LOCAL_ADMIN_HINT.name} · ${LOCAL_ADMIN_HINT.className} · 默认密码 ${LOCAL_ADMIN_HINT.defaultPassword}`
+                ? `试用默认密码 ${LOCAL_ADMIN_HINT.defaultPassword}`
                 : `试用：${LOCAL_TRIAL_HINTS.map(
                     (row) =>
                       `${row.name}/${row.className}（${row.defaultPassword}）`,

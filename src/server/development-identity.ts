@@ -205,7 +205,7 @@ export function createDevelopmentIdentity(config: Config) {
       .json({ ok: true });
   });
 
-  /** 姓名+班级/处室+密码登录（学生/管理员表单）。 */
+  /** 学生：姓名+班级+密码；管理员：只校验密码，固定试用老师。 */
   router.post("/login", async (req, res) => {
     const name = text(req.body?.name);
     const className = text(req.body?.className);
@@ -213,20 +213,31 @@ export function createDevelopmentIdentity(config: Config) {
     const kindRaw = text(req.body?.kind);
     const kind =
       kindRaw === "admin" ? "admin" : kindRaw === "student" ? "student" : undefined;
-    if (!name || !className || !password)
-      throw new HttpError(400, "请填写姓名、班级或处室、以及密码");
-    const trial = findTrialByProfile(name, className, kind);
-    if (!trial) throw new HttpError(404, "没有这个试用账号，请核对姓名和班级/处室");
-    const passwords = await loadTestPasswords(config.dataDir);
-    if (passwords[trial.key] !== password)
-      throw new HttpError(401, "密码不对");
+    if (!password) throw new HttpError(400, "请填写密码");
+    let actorKey: string;
+    if (kind === "admin") {
+      const passwords = await loadTestPasswords(config.dataDir);
+      if (passwords.teacher !== password)
+        throw new HttpError(401, "密码不对");
+      actorKey = "teacher";
+    } else {
+      if (!name || !className)
+        throw new HttpError(400, "请填写姓名、班级以及密码");
+      const trial = findTrialByProfile(name, className, kind ?? "student");
+      if (!trial)
+        throw new HttpError(404, "没有这个试用账号，请核对姓名和班级");
+      const passwords = await loadTestPasswords(config.dataDir);
+      if (passwords[trial.key] !== password)
+        throw new HttpError(401, "密码不对");
+      actorKey = trial.key;
+    }
     for (const [id, value] of sessions)
       if (value.expires <= Date.now()) sessions.delete(id);
     const previous = sessionKey(req);
     if (previous) sessions.delete(previous);
     if (sessions.size >= 100)
       throw new HttpError(429, "测试会话过多，请重启本地服务");
-    const entry = actors.find((actor) => actor.key === trial.key);
+    const entry = actors.find((actor) => actor.key === actorKey);
     if (!entry) throw new HttpError(400, "请选择已有的测试身份");
     const id = randomUUID();
     sessions.set(id, { key: entry.key, expires: Date.now() + maxAge });
