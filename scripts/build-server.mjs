@@ -1,3 +1,4 @@
+import process from "node:process";
 import { build } from "esbuild";
 import { cp, mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";

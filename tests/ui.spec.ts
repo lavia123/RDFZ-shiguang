@@ -3,28 +3,52 @@ const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
   "base64",
 );
+const localOrigin = "http://127.0.0.1:3188";
+async function identity(
+  request: import("@playwright/test").APIRequestContext,
+  key?: string,
+) {
+  const response = key
+    ? await request.post("/api/development/session", {
+        headers: { origin: localOrigin },
+        data: { key },
+      })
+    : await request.delete("/api/development/session", {
+        headers: { origin: localOrigin },
+      });
+  expect(response.ok()).toBe(true);
+}
 test.beforeEach(async ({ request }) => {
-  const response = await request.get("/api/items", {
-    headers: { "X-Test-Actor": "admin" },
-  });
+  await identity(request, "teacher");
+  const response = await request.get("/api/items");
   for (const item of (await response.json()).items)
     await request.delete("/api/items/" + item.id, {
-      headers: { "X-Test-Actor": "admin" },
+      headers: { origin: localOrigin },
     });
+  await identity(request);
 });
 async function openAs(page: import("@playwright/test").Page, actor = "") {
-  if (actor) await page.setExtraHTTPHeaders({ "X-Test-Actor": actor });
+  await identity(
+    page.request,
+    actor === "admin"
+      ? "teacher"
+      : actor === "other"
+        ? "classmate"
+        : actor || undefined,
+  );
   await page.goto("/");
   await expect(page.locator("#roleBadge")).toBeVisible();
 }
-test("guest can browse and cannot pick an admin role", async ({ page }) => {
+test("guest can browse and explicitly enter local development identities", async ({
+  page,
+}) => {
   await openAs(page);
   await expect(page.locator("#panel-browse")).toBeVisible();
   await expect(page.locator("#roleBadge")).toHaveText("游客");
   await expect(page.locator("#roleUser")).toHaveCount(0);
   await page.locator('[data-panel="found"]').click();
   await expect(page.locator("#loginModal")).toBeVisible();
-  await expect(page.locator("#loginTitle")).toContainText("学校平台登录");
+  await expect(page.locator("#loginTitle")).toContainText("开发测试身份");
   await page.locator("#btnCloseLogin").click();
   await expect(page.locator("#panel-browse")).toBeVisible();
 });
@@ -48,7 +72,9 @@ test("publishes, edits, filters and deletes using the signed-in student flow", a
   await page.locator("#place").fill("图书馆二楼");
   await page.locator("#btnSubmit").click();
   await expect(page.locator("#panel-history")).toBeVisible();
-  const row = page.locator(".history-card").filter({ hasText: "浏览器测试蓝色水杯" });
+  const row = page
+    .locator(".history-card")
+    .filter({ hasText: "浏览器测试蓝色水杯" });
   await expect(row).toBeVisible();
   await row.locator(".btn-edit").click();
   await expect(page.locator("#description")).toHaveValue("浏览器测试蓝色水杯");
@@ -100,10 +126,15 @@ test("extracts form text locally and handles camera permission failure", async (
     navigator.mediaDevices.getUserMedia = () =>
       Promise.reject(new Error("permission denied"));
   });
+  await page.locator('[data-panel="found"]').click();
   await page.locator("#btnCamera").click();
-  await expect(page.locator("#toast")).toHaveText("无法打开摄像头，请改用相册上传");
+  await expect(page.locator("#toast")).toHaveText(
+    "无法打开摄像头，请改用相册上传",
+  );
 });
-test("keeps mobile browsing usable without the old role gate", async ({ page }) => {
+test("keeps mobile browsing usable without the old role gate", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openAs(page);
   await expect(page.locator("#panel-browse")).toBeVisible();
@@ -117,8 +148,9 @@ test("student registers an ordinary claim and admin records the real claimant", 
   request,
   browser,
 }) => {
+  await identity(request, "student");
   const response = await request.post("/api/items", {
-    headers: { "X-Test-Actor": "student" },
+    headers: { origin: localOrigin },
     multipart: {
       description: "管理测试物品",
       office: "图书馆总服务台",
@@ -128,15 +160,17 @@ test("student registers an ordinary claim and admin records the real claimant", 
   });
   expect(response.status()).toBe(201);
   const { item } = await response.json();
-  const claimant = await browser.newPage();
+  const claimant = await browser.newPage({ baseURL: localOrigin });
   claimant.on("dialog", (dialog) => dialog.accept());
-  await claimant.setExtraHTTPHeaders({ "X-Test-Actor": "other" });
-  await claimant.goto("/");
-  await claimant.locator(".item-card").filter({ hasText: "管理测试物品" }).click();
+  await openAs(claimant, "other");
+  await claimant
+    .locator(".item-card")
+    .filter({ hasText: "管理测试物品" })
+    .click();
   await claimant.locator("#btnSelfClaim").click();
   await expect(claimant.locator("#detailClaimInfo")).toContainText("本人登记");
   await claimant.close();
-  const guest = await browser.newPage();
+  const guest = await browser.newPage({ baseURL: localOrigin });
   await guest.goto("/");
   await guest.locator(".item-card").filter({ hasText: "管理测试物品" }).click();
   await expect(guest.locator("#claimHiddenNote")).toBeVisible();
@@ -146,7 +180,7 @@ test("student registers an ordinary claim and admin records the real claimant", 
   await openAs(page, "admin");
   await page.locator("#navAdmin").click();
   const row = page.locator(".admin-card").filter({ hasText: "管理测试物品" });
-  await expect(row).toContainText("另一同学");
+  await expect(row).toContainText("同班同学");
   await expect(row).not.toContainText("管理人员");
   await row.locator(".btn-view").click();
   await expect(page.locator("#detailClaimInfo")).toContainText("本人登记");
@@ -170,7 +204,9 @@ test("kiosk clears the previous student without logging the terminal out", async
   await expect(page.locator("#description")).toHaveValue("");
   await expect(page.locator("#roleBadge")).toContainText("图书馆");
 });
-test("ignores stale AI results after selecting another picture", async ({ page }) => {
+test("ignores stale AI results after selecting another picture", async ({
+  page,
+}) => {
   await page.route("**/api/ai/status", (route) =>
     route.fulfill({ json: { configured: true, model: "deepseek-flash" } }),
   );
@@ -196,7 +232,10 @@ test("ignores stale AI results after selecting another picture", async ({ page }
   await expect(page.locator("#description")).toHaveValue("新图片结果");
   expect(calls).toBe(2);
 });
-test("intro submits feedback and links to the actual repository", async ({ page }) => {
+test("intro submits feedback and links to the actual repository", async ({
+  page,
+}) => {
+  await identity(page.request, "student");
   await page.goto("/intro.html");
   await expect(page.locator("#githubLink")).toHaveAttribute(
     "href",
@@ -204,7 +243,9 @@ test("intro submits feedback and links to the actual repository", async ({ page 
   );
   await page.locator('[name="message"]').fill("浏览器测试反馈");
   await page.locator("#feedbackForm button").click();
-  await expect(page.locator("#formStatus")).toHaveText("已收到，谢谢你的反馈！");
+  await expect(page.locator("#formStatus")).toHaveText(
+    "已收到，谢谢你的反馈！",
+  );
 });
 test("development server never serves private state or server source", async ({
   request,

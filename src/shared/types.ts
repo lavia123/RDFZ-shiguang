@@ -89,6 +89,8 @@ export interface Item {
   viewLogs: ViewLog[];
 }
 export interface ItemRow {
+  ownerClassId?: string;
+  schoolRecord?: true;
   id: string;
   owner_id: string;
   description: string;

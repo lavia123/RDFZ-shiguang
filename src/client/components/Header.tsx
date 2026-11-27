@@ -8,6 +8,7 @@ interface Props {
   idleLabel: string;
   onPanel: (panel: Panel) => void;
   onEndKiosk: () => void;
+  onLogin: () => void;
 }
 export function Header({
   ai,
@@ -16,6 +17,7 @@ export function Header({
   idleLabel,
   onPanel,
   onEndKiosk,
+  onLogin,
 }: Props) {
   const admin = session.kind === "admin";
   const kiosk = session.kind === "kiosk";
@@ -45,11 +47,19 @@ export function Header({
           title={
             session.provenance === "test"
               ? "当前是测试账号，不是学校登录"
-              : "学校登录还没接上"
+              : session.provenance === "platform"
+                ? "学校平台身份"
+                : "游客浏览"
           }
         >
           {badge}
         </span>
+        {(session.provenance === "test" ||
+          (session.platformLogin === "ready" && session.kind === "guest")) && (
+          <button type="button" className="ai-config-btn" onClick={onLogin}>
+            {session.provenance === "test" ? "开发测试身份" : "学生登录"}
+          </button>
+        )}
         {kiosk && (
           <>
             <span className="ai-config-btn" id="kioskIdle" role="status">
@@ -73,7 +83,9 @@ export function Header({
             style={{ cursor: "default" }}
           >
             <span className={"ai-dot" + (ai.configured ? " on" : "")}></span>
-            <span>{ai.configured ? "服务器 AI 已就绪" : "服务器 AI 未配置"}</span>
+            <span>
+              {ai.configured ? "服务器 AI 已就绪" : "服务器 AI 未配置"}
+            </span>
           </span>
         )}
         <nav className="nav-tabs" aria-label="功能切换">

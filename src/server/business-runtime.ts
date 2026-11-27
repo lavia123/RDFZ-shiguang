@@ -9,10 +9,18 @@ import {
 } from "./lost-matching/mount.js";
 import { createDefaultReviewer } from "./moderation/review.js";
 import { isApprovedVersion, type ReviewCandidate } from "../shared/identity.js";
+import {
+  lookupDevelopmentStudent,
+  DEVELOPMENT_STATIONS,
+} from "./development-identity.js";
 import { lookupPlatformStudent } from "./platform-bridge.js";
 import { platformScope } from "./platform-scope.js";
 
-export async function createBusinessRuntime(config: Config, platform: boolean) {
+export async function createBusinessRuntime(
+  config: Config,
+  mode: NonNullable<Config["identityMode"]>,
+) {
+  const scoped = mode !== "standalone";
   const store = await new FileStore(config.dataDir).acquire();
   let matching: LostMatchingHandles | undefined;
   try {
@@ -42,7 +50,7 @@ export async function createBusinessRuntime(config: Config, platform: boolean) {
       store,
       reviewSubmission: reviewer,
       isApprovedVersion,
-      resolveActor: platform
+      resolveActor: scoped
         ? actor
         : ({ header }) =>
             nativeActor(
@@ -56,12 +64,16 @@ export async function createBusinessRuntime(config: Config, platform: boolean) {
         config,
         store,
         fetch,
-        platform
+        scoped
           ? {
               resolveActor: actor,
-              lookupStudent: lookupPlatformStudent,
+              stations: mode === "development" ? DEVELOPMENT_STATIONS : [],
+              lookupStudent:
+                mode === "platform"
+                  ? lookupPlatformStudent
+                  : lookupDevelopmentStudent,
               reviewSubmission: reviewer,
-              provenance: "platform",
+              provenance: mode === "platform" ? "platform" : "test",
             }
           : { reviewSubmission: reviewer },
       ),

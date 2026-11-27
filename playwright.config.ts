@@ -21,11 +21,7 @@ export default defineConfig({
     env: {
       PORT: "3188",
       DATA_DIR: ".data-ui",
-      ADMIN_PIN: "fixture-pin",
-      ADMIN_TOKEN_SECRET: "fixture-signing-secret-32-characters-long",
       DEEPSEEK_API_KEY: "",
-      SHIGUANG_TEST_ACTORS: "1",
-      SHIGUANG_TEST_REVIEW: "allow",
     },
     timeout: 45000,
   },

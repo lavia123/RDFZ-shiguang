@@ -1,6 +1,7 @@
 import path from "node:path";
 export interface Config {
   root: string;
+  identityMode?: "platform" | "development" | "standalone";
   publicDir?: string;
   basePath?: string;
   dataDir: string;
@@ -19,38 +20,59 @@ export interface Config {
 }
 export const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 export const DEEPSEEK_MODEL = "deepseek-flash";
-export function configFromEnv(): Config {
+export function configFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  argv: string[] = process.argv,
+): Config {
   const root = path.resolve(import.meta.dirname, "../..");
-  const port = Number(process.env.PORT || 3080);
+  const port = Number(env.PORT || 3080);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error("PORT 必须是有效端口");
-  const adminPin = process.env.ADMIN_PIN?.trim() || "";
-  const tokenSecret = process.env.ADMIN_TOKEN_SECRET?.trim() || "";
+  const adminPin = env.ADMIN_PIN?.trim() || "";
+  const tokenSecret = env.ADMIN_TOKEN_SECRET?.trim() || "";
   const production =
-    process.env.NODE_ENV === "production" ||
-    process.argv.includes("--production");
-  const testActors = !production && process.env.SHIGUANG_TEST_ACTORS === "1";
+    env.NODE_ENV === "production" || argv.includes("--production");
+  const platformKeys = [
+    "RDFZ_LESSON_ID",
+    "RDFZ_APPLICATION_TOKEN",
+    "RDFZ_OPUS_ROOT",
+    "RDFZ_SCHOOL_DATA_ROOT",
+  ];
+  const platform = platformKeys.some((key) => env[key] !== undefined);
+  if (platform && platformKeys.some((key) => !env[key]?.trim()))
+    throw new Error("平台身份配置不完整，请检查 RDFZ 运行环境");
+  const development = argv.includes("--local-dev");
+  if (development && (production || platform))
+    throw new Error("本地测试身份不能用于生产或平台环境");
+  const identityMode = platform
+    ? "platform"
+    : development
+      ? "development"
+      : "standalone";
+  const testActors =
+    !production &&
+    !platform &&
+    !development &&
+    env.SHIGUANG_TEST_ACTORS === "1";
   return {
     root,
+    identityMode,
     publicDir: path.resolve(import.meta.dirname, "../public"),
-    basePath: process.env.RDFZ_LESSON_ID
-      ? `/lesson-app/${process.env.RDFZ_LESSON_ID}`
-      : "",
+    basePath: env.RDFZ_LESSON_ID ? `/lesson-app/${env.RDFZ_LESSON_ID}` : "",
     dataDir: path.resolve(
-      process.env.RDFZ_OPUS_ROOT || root,
-      process.env.DATA_DIR || "data",
+      env.RDFZ_OPUS_ROOT || root,
+      env.DATA_DIR || (development ? ".data-development" : "data"),
     ),
     port,
     adminPin,
     tokenSecret,
-    aiKey: process.env.DEEPSEEK_API_KEY?.trim() || "",
+    aiKey: env.DEEPSEEK_API_KEY?.trim() || "",
     production,
     testActors,
-    testReviewAllow:
-      testActors && process.env.SHIGUANG_TEST_REVIEW === "allow",
+    testReviewAllow: testActors && env.SHIGUANG_TEST_REVIEW === "allow",
     devActor:
-      testActors && /^[a-z]{1,16}$/.test(process.env.SHIGUANG_DEV_ACTOR || "")
-        ? process.env.SHIGUANG_DEV_ACTOR!.trim()
+      testActors && /^[a-z]{1,16}$/.test(env.SHIGUANG_DEV_ACTOR || "")
+        ? env.SHIGUANG_DEV_ACTOR!.trim()
         : "",
   };
 }
